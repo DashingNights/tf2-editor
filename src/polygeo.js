@@ -509,6 +509,9 @@ export function bevel(m, fs, h, o) {
   return { mesh: { v, f, old } };
 }
 
+// Corners of polygon r (indices) from a round to b, both included.
+const arc = (r, a, b) => { const out = []; for (let j = r.indexOf(a); ; j = (j + 1) % r.length) { out.push(r[j]); if (r[j] === b) return out; } };
+
 // Max's Connect: splits faces across the selected edges (index keys 'a|b'). A face with two of them gets segs edges
 // between points spaced evenly along both; one with more gets an edge from each one's middle point to its centre.
 // Points on an edge go into the faces on both sides. { mesh, edges: new edges as index pairs }.
@@ -531,11 +534,8 @@ export function connect(m, sel, segs = 1) {
       const p = along(...es[0]), q = along(...es[1]);
       let polys = [ring];
       for (let i = 0; i < segs; i++) {
-        const x = p[i], y = q[segs - 1 - i], k = polys.findIndex(r => r.includes(x) && r.includes(y)), r = polys[k];
-        const i0 = r.indexOf(x), i1 = r.indexOf(y), A = [], B = [];
-        for (let j = i0; ; j = (j + 1) % r.length) { A.push(r[j]); if (j === i1) break; }
-        for (let j = i1; ; j = (j + 1) % r.length) { B.push(r[j]); if (j === i0) break; }
-        polys.splice(k, 1, A, B);
+        const x = p[i], y = q[segs - 1 - i], k = polys.findIndex(r => r.includes(x) && r.includes(y));
+        polys.splice(k, 1, arc(polys[k], x, y), arc(polys[k], y, x));
         made.push([x, y]);
       }
       for (const vs of polys) f.push({ ...fc, vs });
@@ -543,13 +543,29 @@ export function connect(m, sel, segs = 1) {
     }
     const c = v.push(centre(pts(m, fc.vs))) - 1, mids = es.map(([a, b]) => along(a, b)[Math.floor((segs - 1) / 2)]).sort((x, y) => ring.indexOf(x) - ring.indexOf(y));
     mids.forEach((x, i) => {
-      const y = mids[(i + 1) % mids.length], vs = [];
-      for (let j = ring.indexOf(x); ; j = (j + 1) % ring.length) { vs.push(ring[j]); if (ring[j] === y) break; }
-      f.push({ ...fc, vs: [...vs, c] });
+      f.push({ ...fc, vs: [...arc(ring, x, mids[(i + 1) % mids.length]), c] });
       made.push([x, c]);
     });
   });
   return { mesh: { v, f, old: v }, edges: made };
+}
+// Max's vertex Connect: each face holding two or more of the selected vertices (indices) splits along new edges from
+// each of them to the next one round the face, unless a part would have no area or face the other way (the two share
+// an edge, the corners between them are in a line, the edge runs outside a concave face) or the edge would cross the
+// face's outline (in and out of a concave face). { mesh, edges: new edges as index pairs }.
+export function connectVerts(m, verts) {
+  const f = [], made = [];
+  for (const fc of m.f) {
+    const s = fc.vs.filter(i => verts.has(i)), polys = [fc.vs], n = normal(m, fc), [u, w] = basis(n), p2 = i => [dot(m.v[i], u), dot(m.v[i], w)];
+    if (s.length > 1) s.forEach((x, i) => {
+      const y = s[(i + 1) % s.length], k = polys.findIndex(r => r.includes(x) && r.includes(y)), ab = [arc(polys[k], x, y), arc(polys[k], y, x)];
+      if (ab.some(q => dot(newell(pts(m, q)), n) < 1e-6) || pairs(polys[k]).some(([a, b]) => segCross(p2(x), p2(y), p2(a), p2(b)))) return;
+      polys.splice(k, 1, ...ab);
+      made.push([x, y]);
+    });
+    for (const vs of polys) f.push({ ...fc, vs });
+  }
+  return { mesh: { v: m.v, f, old: m.v }, edges: made };
 }
 
 // Max's Remove: the faces on both sides of each edge become one (vertices left inside one face go). The brush keeps

@@ -1,12 +1,13 @@
 // Object snapping (3ds Max's snaps): while the selection moves, the moving point nearest a target on screen is pulled
-// onto the unselected geometry: onto a vertex (cfg.snapVertex), onto the nearest point of an edge (cfg.snapEdge), or
-// onto the plane of the face under the cursor (cfg.snapFace, 3D view). Targets count within R pixels; where there is
-// none the move keeps its grid snapping. A drag builds one snapper at its start (the targets do not move during it).
+// onto the unselected geometry: onto a vertex (cfg.snapVertex), onto the nearest point of an edge (cfg.snapEdge), onto
+// the point where two edges cross (cfg.snapIntersection, CAD's intersection snap), or onto the plane of the face under
+// the cursor (cfg.snapFace, 3D view). Targets count within R pixels; where there is none the move keeps its grid
+// snapping. A drag builds one snapper at its start (the targets do not move during it).
 import { cfg } from './settings.js';
 import { cache } from './state.js';
 
 export const R = 10; // pixels
-export const any = () => !!(cfg.snapVertex || cfg.snapEdge || cfg.snapFace);
+export const any = () => !!(cfg.snapVertex || cfg.snapEdge || cfg.snapIntersection || cfg.snapFace);
 // The target point of the last snap (or null): the views draw a marker there.
 export const mark = { at: null };
 
@@ -65,7 +66,7 @@ export function snapper({ proj, ray = null, hit = null, moving, skip = () => fal
   const cells = new Map(), C = R, cell = s => Math.floor(s[0] / C) + ',' + Math.floor(s[1] / C);
   const put = (s, x) => { const k = cell(s); (cells.get(k) ?? cells.set(k, new Set()).get(k)).add(x); };
   if (cfg.snapVertex) for (const p of geo.pts) { const s = proj(p); if (s) put(s, { p, s }); }
-  if (cfg.snapEdge) for (const [a, b] of geo.edges) {
+  if (cfg.snapEdge || cfg.snapIntersection) for (const [a, b] of geo.edges) {
     const sa = proj(a), sb = proj(b);
     if (!sa || !sb) continue;
     const n = Math.min(2000, Math.ceil(dist2(sa, sb) / (C / 2)) + 1), x = { a, b, sa, sb };
@@ -82,13 +83,41 @@ export function snapper({ proj, ray = null, hit = null, moving, skip = () => fal
     const u = l > 1e-9 ? Math.max(0, Math.min(1, ((s[0] - x.sa[0]) * e[0] + (s[1] - x.sa[1]) * e[1]) / l)) : 0;
     return add(x.a, sub(x.b, x.a).map(v => v * u));
   };
+  // The points where two target edges near screen point s cross on screen, as { at, s } (s: on screen); per cell, as
+  // near() depends on the cell only. Parallel and collinear pairs give none, nor do edges seen end-on (2D views: a
+  // brush's depth edges; its top and bottom edges overlap there). 2D views: at is the crossing on the first edge (the
+  // drag's allow() drops the depth axis). 3D: only edges that nearly meet (closest points under 1 unit apart) count,
+  // at the midpoint of their closest points.
+  const xs = new Map();
+  const crossings = s => {
+    const k = cell(s);
+    if (xs.has(k)) return xs.get(k);
+    const es = [...near(s)].filter(x => x.a), out = [];
+    // ponytail: every pair of the edges near s (O(n^2) per cell, once per drag); a sweep if zoomed-out dense views stall
+    for (let i = 0; i < es.length; i++) for (let j = i + 1; j < es.length; j++) {
+      const x = es[i], y = es[j], e = sub(x.sb, x.sa), f = sub(y.sb, y.sa), g = sub(y.sa, x.sa), den = e[0] * f[1] - e[1] * f[0];
+      if (!(Math.abs(den) > 1e-3 * Math.hypot(...e) * Math.hypot(...f))) continue; // parallel, collinear or a point
+      const u = (g[0] * f[1] - g[1] * f[0]) / den, w = (g[0] * e[1] - g[1] * e[0]) / den;
+      if (!(u > -1e-6 && u < 1 + 1e-6 && w > -1e-6 && w < 1 + 1e-6)) continue; // the lines cross off the segments
+      let at = add(x.a, sub(x.b, x.a).map(v => v * u));
+      if (ray) {
+        const p = rayToSegment(y.a, sub(y.b, y.a), x.a, x.b), q = rayToSegment(x.a, sub(x.b, x.a), y.a, y.b);
+        if (Math.hypot(...sub(p, q)) >= 1) continue;
+        at = add(p, q).map(v => v / 2);
+      }
+      out.push({ at, s: [x.sa[0] + e[0] * u, x.sa[1] + e[1] * u] });
+    }
+    xs.set(k, out);
+    return out;
+  };
   return (t, allow, cursor) => {
     if (own && cursor && cells.size) {
       let tgt = null;
       for (const x of near(cursor)) {
         if (x.p) { const d = dist2(cursor, x.s); if (d < R && (!tgt || d - R / 2 < tgt.score)) tgt = { at: x.p, score: d - R / 2 }; }
-        else { const w = onEdge(x, cursor), sw = w && proj(w), d = sw && dist2(cursor, sw); if (sw && d < R && (!tgt || d < tgt.score)) tgt = { at: w, score: d }; }
+        else if (cfg.snapEdge) { const w = onEdge(x, cursor), sw = w && proj(w), d = sw && dist2(cursor, sw); if (sw && d < R && (!tgt || d < tgt.score)) tgt = { at: w, score: d }; }
       }
+      if (cfg.snapIntersection) for (const c of crossings(cursor)) { const d = dist2(cursor, c.s); if (d < R && (!tgt || d - R / 2 < tgt.score)) tgt = { at: c.at, score: d - R / 2 }; }
       if (tgt) {
         const st = proj(tgt.at);
         let p = null, pd = Infinity;
@@ -97,15 +126,16 @@ export function snapper({ proj, ray = null, hit = null, moving, skip = () => fal
       }
     }
     let best = null;
-    // d: pixels to the target; a vertex scores R / 2 better, so it wins over the edges that end at it
+    // d: pixels to the target; a vertex or an intersection scores R / 2 better, so it wins over the edges through it
     const offer = (d, score, at, p) => { if (d < R && (!best || score < best.score)) best = { score, t: allow(sub(at, p)), at }; };
     if (cells.size) for (const p of moving) {
       const s = proj(add(p, t));
       if (!s) continue;
       for (const x of near(s)) {
         if (x.p) { const d = dist2(s, x.s); offer(d, d - R / 2, x.p, p); }
-        else { const w = onEdge(x, s), sw = w && proj(w), d = sw && dist2(s, sw); if (sw) offer(d, d, w, p); }
+        else if (cfg.snapEdge) { const w = onEdge(x, s), sw = w && proj(w), d = sw && dist2(s, sw); if (sw) offer(d, d, w, p); }
       }
+      if (cfg.snapIntersection) for (const c of crossings(s)) { const d = dist2(s, c.s); offer(d, d - R / 2, c.at, p); }
     }
     if (best || !cfg.snapFace || !hit || !cursor) return best && { t: best.t, at: best.at };
     // face: the moving point nearest the plane under the cursor goes onto it, along the drag's axes

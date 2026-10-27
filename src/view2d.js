@@ -273,13 +273,31 @@ function resizeCursor(h, yaw) {
   return ['ew-resize', 'nesw-resize', 'ns-resize', 'nwse-resize'][Math.round(a / 45) % 4];
 }
 
+// World -> screen in view v as it is now (a copy): a drag's snapper rasterises its targets once, so its proj must not
+// follow a wheel zoom during the drag (the cells would no longer match and far targets would pull).
+export const projNow = v => { const o = { ...v, c: [...v.c] }; return p => toScreen(o, p); };
+
+// A block drag's corner at w (view coordinates): the object snap target near it (drag d's snapper, its one moving
+// point the origin, so the offset is the point under the cursor), marked, else the grid point.
+function corner(v, d, w) {
+  const t = [0, 0, 0];
+  v.ax.forEach((k, i) => { t[k] = w[i]; });
+  const hit = d.snap && d.snap(t, a => a);
+  snap.mark.at = hit?.at ?? null;
+  return hit ? v.ax.map(k => hit.at[k]) : w.map(sn);
+}
+
 // ---------- mouse ----------
 function down(v, e) {
   v.cv.setPointerCapture(e.pointerId);
   const w = toWorld(v, e.offsetX, e.offsetY), at = { v, sx: e.offsetX, sy: e.offsetY, a: w, b: w };
   if (e.button !== 0 || held.has('Space')) return void (drag = { ...at, mode: 'pan', c0: [...v.c] });
   if (use('down', v, e)) return void (drag = { ...at, mode: 'tool' });
-  if (S.tool === 'block') return void (drag = { ...at, mode: 'block', a: w.map(sn), b: w.map(sn) });
+  if (S.tool === 'block') {
+    const d = { ...at, mode: 'block', snap: snap.any() && snap.snapper({ proj: projNow(v), moving: [[0, 0, 0]] }) };
+    d.a = d.b = corner(v, d, w);
+    return void (drag = d);
+  }
   if (S.tool === 'entity') {
     const o = [0, 0, 0]; // ponytail: depth axis is 0 in 2D; click a surface in 3D for exact placement
     v.ax.forEach((k, i) => { o[k] = sn(w[i]); });
@@ -290,7 +308,7 @@ function down(v, e) {
   if (fr && pick2d(v, w, true)) {
     // Snap the box corner like Hammer; point entities snap their origin, as the 3D gizmo does.
     const skip = n => sel.has(n);
-    return void (drag = { ...at, mode: 'move', ref: snapRef(), clone: e.shiftKey, snap: snap.any() && snap.snapper({ proj: p => toScreen(v, p), moving: snap.movingOf(sel), skip }) });
+    return void (drag = { ...at, mode: 'move', ref: snapRef(), clone: e.shiftKey, snap: snap.any() && snap.snapper({ proj: projNow(v), moving: snap.movingOf(sel), skip }) });
   }
   drag = { ...at, mode: 'marquee' };
 }
@@ -305,12 +323,13 @@ function move(v, e) {
     return;
   }
   if (d.mode === 'pan') { v.c = [d.c0[0] - (e.offsetX - d.sx) / v.z, d.c0[1] + (e.offsetY - d.sy) / v.z]; holdView(v); }
-  else if (d.mode === 'block') d.b = w.map(sn);
+  else if (d.mode === 'block') d.b = corner(v, d, w);
   else if (d.mode === 'marquee') d.b = w;
   else if (d.mode === 'move') {
-    const t = [0, 0, 0];
-    v.ax.forEach((k, i) => { t[k] = sn(d.ref[k] + w[i] - d.a[i]) - d.ref[k]; });
-    const hit = d.snap && d.snap(t, a => a.map((x, k) => (v.ax.includes(k) ? x : 0)));
+    // object snaps test the pointer's own offset (raw); without a target the grid-snapped one applies
+    const t = [0, 0, 0], raw = [0, 0, 0];
+    v.ax.forEach((k, i) => { raw[k] = w[i] - d.a[i]; t[k] = sn(d.ref[k] + raw[k]) - d.ref[k]; });
+    const hit = d.snap && d.snap(raw, a => a.map((x, k) => (v.ax.includes(k) ? x : 0)));
     if (hit) t.splice(0, 3, ...hit.t);
     snap.mark.at = hit?.at ?? null;
     d.xf = { s: [1, 1, 1], t };
@@ -366,6 +385,7 @@ function up(v, e) {
 function cancelDrag() {
   const d = drag;
   drag = null;
+  snap.mark.at = null;
   if (d?.xf) setPreview(null);
   invalidate();
 }

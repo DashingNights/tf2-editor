@@ -22,7 +22,7 @@ export const ICONS = {
   'tool.chamfer': 'octagon', 'tool.roof': 'house', 'tool.cordon': 'scan',
   'mode.vertex': 'circle-dot', 'mode.edge': 'slash', 'mode.face': 'square', 'mode.object': 'box', gridDown: 'minus', gridUp: 'plus',
   'gizmo.move': 'move', 'gizmo.rotate': 'rotate-3d', 'gizmo.scale': 'scale-3d', 'gizmo.none': 'mouse-pointer', 'gizmo.world': 'globe', 'gizmo.local': 'axis-3d',
-  'snap.grid': 'grid-3x3', 'snap.vertex': 'dot', 'snap.edge': 'git-commit-horizontal', 'snap.face': 'square-dashed', 'snap.rotation': 'rotate-cw',
+  'snap.grid': 'grid-3x3', 'snap.vertex': 'dot', 'snap.edge': 'git-commit-horizontal', 'snap.intersection': 'crosshair', 'snap.face': 'square-dashed', 'snap.rotation': 'rotate-cw',
   'select.all': 'check-check', 'select.invert': 'arrow-left-right', 'select.sameMaterial': 'palette', 'select.sameClass': 'tag',
   'select.sameVisgroup': 'layers', 'select.byMaterial': 'paintbrush', 'hide.selected': 'eye-off', 'hide.isolate': 'focus', 'hide.unhideAll': 'eye',
   group: 'group', ungroup: 'ungroup', 'select.ignoreGroups': 'unlink', 'visgroup.create': 'list-plus',
@@ -71,7 +71,7 @@ export const ROLLOUTS = [
   { id: 'gizmo', title: 'Gizmo and snapping', rows: [
     ['Gizmo', ['Move', 'gizmo.move'], ['Rotate', 'gizmo.rotate'], ['Scale', 'gizmo.scale'], ['None', 'gizmo.none']],
     ['Axes', ['World axes', 'gizmo.world'], ['Local axes', 'gizmo.local']],
-    ['Snap', ['Grid snap', 'snap.grid'], ['Vertex snap', 'snap.vertex'], ['Edge snap', 'snap.edge'], ['Face snap', 'snap.face']],
+    ['Snap', ['Grid snap', 'snap.grid'], ['Vertex snap', 'snap.vertex'], ['Edge snap', 'snap.edge'], ['Intersection snap', 'snap.intersection'], ['Face snap', 'snap.face']],
     ['Rotate', ['Rotation snap', 'snap.rotation']],
   ] },
   { id: 'select', title: 'Selection', rows: [

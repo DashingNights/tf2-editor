@@ -444,9 +444,10 @@ function gizmoEnd() {
 }
 
 // ---------- operations ----------
+const many = l => (l === 'vertex' ? 'vertices' : l + 's');
 function need(l, what) {
-  if (level !== l) return say(`${what} works on ${l}s (press ${LEVELS.indexOf(l) + 1})`), false;
-  if (!picked[l].size) return say(`select ${l}s first`), false;
+  if (level !== l) return say(`${what} works on ${many(l)} (press ${LEVELS.indexOf(l) + 1})`), false;
+  if (!picked[l].size) return say(`select ${many(l)} first`), false;
   return true;
 }
 // Mesh edits per brush: fn(entry, Set of element indices) -> { mm, keys } | { error }; previewed, then committed.
@@ -546,20 +547,26 @@ function slice() {
 }
 function chamfer() {
   if (level === 'face') return say('chamfer works on vertices (1) or edges (2)');
-  if (!picked[level].size) return say(`select ${level}s first`);
+  if (!picked[level].size) return say(`select ${many(level)} first`);
   const { chamfer: d, segments } = opt();
   planeOp((b, ids) => {
     const s = level === 'edge' ? P.chamferEdges(b.s, b.m, ids, d, segments, nextId) : P.chamferVerts(b.s, b.m, ids, d, nextId);
     return s ? [s] : 'chamfer: nothing valid would be left (a smaller amount?)';
   }, false, `chamfered by ${d}`);
 }
+// Max's Connect: new edges between the selected edges (segments of them; the new edges are selected after) or between
+// the selected vertices on each face (they stay selected).
 function connect() {
-  if (!need('edge', 'connect')) return;
-  meshOp((b, es) => { const c = P.connect(b.m, es, opt().connect); return c.edges.length ? { mm: c.mesh, keys: c.edges.map(([x, y]) => P.edgeKey(c.mesh, x, y)) } : null; }, false, 'connected');
+  if (level === 'face') return say('connect works on vertices (1) or edges (2)');
+  if (!picked[level].size) return say(`select ${many(level)} first`);
+  meshOp((b, ids) => {
+    const c = level === 'edge' ? P.connect(b.m, ids, opt().connect) : P.connectVerts(b.m, ids);
+    return c.edges.length ? { mm: c.mesh, keys: level === 'edge' ? c.edges.map(([x, y]) => P.edgeKey(c.mesh, x, y)) : [...ids].map(i => P.vertexKey(b.m, i)) } : null;
+  }, false, 'connected');
 }
 function remove() {
   if (level === 'face') return deleteFaces();
-  if (!picked[level].size) return say(`select ${level}s first`);
+  if (!picked[level].size) return say(`select ${many(level)} first`);
   meshOp((b, ids) => ({ mm: level === 'edge' ? P.removeEdges(b.m, ids) : P.removeVerts(b.m, ids) }), false, 'removed');
 }
 // Groups of selected elements that share a corner (all: one group), each with its centre: position key -> centre.
@@ -576,7 +583,7 @@ function centres(all) {
   return out;
 }
 function collapse() {
-  if (!picked[level].size) return say(`select ${level}s first`);
+  if (!picked[level].size) return say(`select ${many(level)} first`);
   const at = centres(level === 'vertex');
   previewXf(p => at.get(P.key(p)) ?? p);
   if (level === 'vertex') prev.keys = new Set([...at.values()].map(P.key));
@@ -597,7 +604,7 @@ function weld() {
   commit(undefined, undefined, { msg: `welded within ${t}` });
 }
 function snap() {
-  if (!picked[level].size) return say(`select ${level}s first`);
+  if (!picked[level].size) return say(`select ${many(level)} first`);
   applyXf(p => p.map(x => Math.round(x / S.grid) * S.grid + 0));
 }
 const nudge = t => applyXf(p => add(p, t));
@@ -918,14 +925,14 @@ function makePanel(host) {
   };
   const lab = (text, ...kids) => el('label', { title: kids[0]?.title ?? '' }, text + ' ', ...kids);
   const btn = (text, cmd) => { const b = el('button', { textContent: text, onclick: () => runCmd(cmd) }); b.dataset.cmd2 = cmd; return b; };
-  const lv = [...LEVELS, 'object'].map((l, i) => { const b = el('button', { textContent: `${l[0].toUpperCase()}${l.slice(1)} ${i + 1}`, title: l === 'object' ? 'Back to objects (4, Escape)' : `Edit ${l}s (${i + 1})`, onclick: () => (l === 'object' ? exit() : setLevel(l)) }); b.dataset.level = l; b.dataset.cmd2 = `mode.${l}`; return b; });
+  const lv = [...LEVELS, 'object'].map((l, i) => { const b = el('button', { textContent: `${l[0].toUpperCase()}${l.slice(1)} ${i + 1}`, title: l === 'object' ? 'Back to objects (4, Escape)' : `Edit ${many(l)} (${i + 1})`, onclick: () => (l === 'object' ? exit() : setLevel(l)) }); b.dataset.level = l; b.dataset.cmd2 = `mode.${l}`; return b; });
   const sticky = el('input', { type: 'checkbox', title: 'Select the same element of touching brushes too, so they stay together', onchange: () => setOpt('sticky', sticky.checked) });
   const pv = el('select', { title: 'Pivot for rotate and scale', onchange: () => { setOpt('pivot', pv.value); placeGizmo(); } }, el('option', { value: 'selection', textContent: 'Selection centre' }), el('option', { value: 'brush', textContent: 'Brush centre' }));
   const type = el('select', { title: 'Group: each patch along its mean normal. Local normal: every face along its own. By face: each face apart.', onchange: () => setOpt('extrudeType', type.value) },
     ...[['group', 'Group'], ['local', 'Local normal'], ['poly', 'By face']].map(([v, t]) => el('option', { value: v, textContent: t })));
   const ops = {
     vertex: [lab('Weld', num('weld', 'Weld distance')), btn('Weld', 'poly.weld'), btn('Collapse', 'poly.collapse'), lab('Chamfer', num('chamfer', 'Chamfer distance along each edge')), btn('Chamfer', 'poly.chamfer'),
-      btn('Snap to grid', 'poly.snap'), btn('Remove', 'poly.remove'), btn('Slice', 'poly.slice')],
+      btn('Connect', 'poly.connect'), btn('Snap to grid', 'poly.snap'), btn('Remove', 'poly.remove'), btn('Slice', 'poly.slice')],
     edge: [lab('Chamfer', num('chamfer', 'Chamfer distance along both faces')), lab('segments', num('segments', 'Strips round the chamfer')), btn('Chamfer', 'poly.chamfer'), lab('Connect', num('connect', 'Edges between the selected edges')), btn('Connect', 'poly.connect'),
       btn('Remove', 'poly.remove'), btn('Collapse', 'poly.collapse'), btn('Split', 'poly.slice'), btn('Loop', 'poly.loop'), btn('Ring', 'poly.ring')],
     face: [lab('Extrude', num('extrude', 'Extrude height')), type, btn('Extrude', 'poly.extrude'), lab('Inset', num('inset', 'Inset amount')), btn('Inset', 'poly.inset'),
@@ -1026,7 +1033,7 @@ export function mount(el3d) {
     ['poly.detach', 'Poly: detach faces to new brushes (slabs)', detach, [], want()],
     ['poly.slice', 'Poly: slice brushes through the selected vertices or edges (split along a loop)', slice, [], want()],
     ['poly.chamfer', 'Poly: chamfer edges or vertices', chamfer, ['shift+c'], want()],
-    ['poly.connect', 'Poly: connect edges (split faces between them)', connect, ['ctrl+shift+e'], want()],
+    ['poly.connect', 'Poly: connect edges or vertices (split faces between them)', connect, ['ctrl+shift+e'], want()],
     ['poly.remove', 'Poly: remove vertices or edges (delete faces)', remove, ['backspace', 'delete'], want()],
     ['poly.collapse', 'Poly: collapse the selection to its centre', collapse, ['ctrl+alt+c'], want()],
     ['poly.weld', 'Poly: weld vertices within the weld distance', weld, [], want()],

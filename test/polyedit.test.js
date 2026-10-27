@@ -14,6 +14,7 @@ const at = (m, p) => m.v.findIndex(q => q.every((x, k) => Math.abs(x - p[k]) < 1
 const faceBy = (m, test) => m.f.findIndex(fc => test(P.normal(m, fc)));
 const top = n => n[2] > 0.99;
 const build = (m, s, o) => P.build(m, s, { nextId: next, ...o });
+const text = ss => V.serialize({ name: '', kv: [], children: ss });
 
 test('meshOf: a box has 8 shared vertices, 6 quads, 12 edges', () => {
   const m = P.meshOf(box());
@@ -48,9 +49,9 @@ test('planarity: a lowered corner also stays one convex brush', () => {
   near(vol(r.solids[0]), 128 ** 3 - (128 * 128 * 32) / 6, 'volume');
 });
 
-// An L-shaped prism: outline (0,0) (128,0) (128,64) (64,64) (64,128) (0,128), 0..64 high.
-function lMesh() {
-  const o = [[0, 0], [128, 0], [128, 64], [64, 64], [64, 128], [0, 128]], v = [...o.map(p => [...p, 0]), ...o.map(p => [...p, 64])], s = box();
+// A prism over outline o (CCW), 0..64 high; by default an L: (0,0) (128,0) (128,64) (64,64) (64,128) (0,128).
+function lMesh(o = [[0, 0], [128, 0], [128, 64], [64, 64], [64, 128], [0, 128]]) {
+  const v = [...o.map(p => [...p, 0]), ...o.map(p => [...p, 64])], s = box();
   const side = V.kids(s, 'side')[0], n = o.length;
   const f = [{ vs: o.map((_, i) => n - 1 - i), side }, { vs: o.map((_, i) => n + i), side }];
   for (let i = 0; i < n; i++) f.push({ vs: [i, (i + 1) % n, n + (i + 1) % n, n + i], side });
@@ -297,4 +298,87 @@ test('a corner moved onto a line of its face and on again: the face that collaps
   }
   assert.equal(r.solids.length, 3);
   near(r.solids.reduce((a, x) => a + vol(x), 0), 1485483, 'volume', 1e-6);
+});
+
+test('connect edges: a ring of four round a box makes a loop (raised: a ridge); two edges at a corner cut it off', () => {
+  const s = box(), m = P.meshOf(s), c = P.connect(m, P.ringOf(m, P.ek(at(m, [0, 0, 128]), at(m, [128, 0, 128]))));
+  assert.equal(c.edges.length, 4);
+  assert.equal(c.mesh.f.length, 10, 'the four faces along x split in two');
+  assert.ok(c.edges.flat().every(i => c.mesh.v[i][0] === 64), 'round the middle');
+  const r = build(c.mesh, s);
+  assert.equal(text(r.solids), text([s]), 'the brush stays as it was');
+  const roof = build(P.moved(r.mesh, p => (p[0] === 64 && p[2] === 128 ? [64, p[1], 160] : undefined)), r.solids);
+  assert.ifError(roof.error);
+  assert.equal(roof.solids.length, 1);
+  near(vol(roof.solids[0]), 128 ** 3 + (128 * 128 * 32) / 2, 'volume');
+  const vs = m.f[faceBy(m, top)].vs, k = P.connect(m, new Set([P.ek(vs[0], vs[1]), P.ek(vs[1], vs[2])]));
+  assert.equal(k.edges.length, 1);
+  assert.ok(k.mesh.f.some(fc => fc.vs.length === 3 && fc.vs.includes(vs[1])), 'the corner is a triangle of its own');
+});
+
+test('connect vertices: opposite corners split a face in two (lowered: a valley); corners on one edge or on different faces do nothing', () => {
+  const s = box(), m = P.meshOf(s), vs = m.f[faceBy(m, top)].vs, c = P.connectVerts(m, new Set([vs[0], vs[2]]));
+  assert.deepEqual(c.edges, [[vs[0], vs[2]]]);
+  assert.deepEqual(c.mesh.f.filter(fc => top(P.normal(c.mesh, fc))).map(fc => fc.vs.length), [3, 3], 'the top in two triangles');
+  const r = build(c.mesh, s);
+  assert.equal(text(r.solids), text([s]), 'the brush stays as it was');
+  // the new edge's ends lowered: the top folds along it (a valley, 2 pieces), not along the other diagonal (a ridge)
+  const ends = new Set([vs[0], vs[2]].map(i => P.key(m.v[i]))), down = (mm, src) => build(P.moved(mm, p => (ends.has(P.key(p)) ? [p[0], p[1], 96] : undefined)), src);
+  const valley = down(r.mesh, r.solids);
+  assert.equal(valley.solids.length, 2);
+  near(valley.solids.reduce((a, x) => a + vol(x), 0), 128 ** 3 - 2 * ((128 * 128) / 2) * (64 / 3), 'volume');
+  assert.equal(down(m, s).solids.length, 1, 'without the connect: a ridge');
+  assert.equal(P.connectVerts(m, new Set([vs[0], vs[1]])).edges.length, 0, 'corners on one edge');
+  assert.equal(P.connectVerts(m, new Set([at(m, [0, 0, 0]), at(m, [128, 128, 128])])).edges.length, 0, 'no face holds both');
+});
+
+test('connect vertices: three corners of a pentagon, two of them on one edge, give two new edges', () => {
+  const s0 = box(), m0 = P.meshOf(s0), s = P.chamferVerts(s0, m0, new Set([at(m0, [128, 128, 128])]), 16, next), m = P.meshOf(s);
+  const [a, b, c] = [[0, 0, 128], [128, 112, 128], [112, 128, 128]].map(p => at(m, p)), r = P.connectVerts(m, new Set([a, b, c]));
+  assert.deepEqual(new Set(r.edges.map(e => P.ek(...e))), new Set([P.ek(a, b), P.ek(c, a)]), 'b and c share an edge');
+  assert.deepEqual(r.mesh.f.filter(fc => top(P.normal(r.mesh, fc))).map(fc => fc.vs.length), [3, 3, 3]);
+  assert.equal(text(build(r.mesh, s).solids), text([s]), 'the brush stays as it was');
+});
+
+test('connect vertices: a pair across the notch of a U is skipped (the edge would cross the outline); the other pairs split it', () => {
+  const { m, s } = lMesh([[0, 0], [192, 0], [192, 128], [128, 128], [128, 64], [64, 64], [64, 128], [0, 128]]);
+  const [a, b, c] = [[0, 0, 64], [192, 128, 64], [128, 64, 64]].map(p => at(m, p));
+  assert.equal(P.connectVerts(m, new Set([a, b])).edges.length, 0, 'out of the U and in again');
+  const r = P.connectVerts(m, new Set([a, b, c])), after = build(r.mesh, s);
+  assert.deepEqual(new Set(r.edges.map(e => P.ek(...e))), new Set([P.ek(b, c), P.ek(c, a)]));
+  assert.ifError(after.error);
+  near(after.solids.reduce((t, x) => t + vol(x), 0), (192 * 128 - 64 * 64) * 64, 'volume');
+});
+
+test('connect vertices: a point an edge connect left on a long slanted edge is in line with its ends (no sliver face)', () => {
+  // a + (b - a) / 3 as connect() makes it rounds a little off the line: that part has no area all the same
+  const a = [0.1, 0.1, 64], b = [1000.1, 500.1, 64], p = a.map((x, k) => x + (b[k] - x) * (1 / 3));
+  const m = { v: [a, p, b, [1000.1, 1012.1, 64], [0.1, 512.1, 64]], f: [{ vs: [0, 1, 2, 3, 4] }] };
+  assert.equal(P.connectVerts(m, new Set([0, 2])).edges.length, 0);
+  assert.equal(P.connectVerts(m, new Set([1, 3])).edges.length, 1, 'the point to a far corner');
+});
+
+test('connect edges: all twelve box edges fan each face round its centre; three segments round a ring run straight across', () => {
+  const s = box(), m = P.meshOf(s), all = P.connect(m, new Set(P.edgeMap(m).keys()));
+  assert.equal(all.edges.length, 24);
+  assert.equal(all.mesh.f.length, 24);
+  assert.equal(text(build(all.mesh, s).solids), text([s]), 'the brush stays as it was');
+  const r = P.connect(m, P.ringOf(m, P.ek(at(m, [0, 0, 128]), at(m, [128, 0, 128]))), 3), x = i => r.mesh.v[i][0];
+  assert.equal(r.edges.length, 12);
+  assert.ok(r.edges.every(([i, j]) => x(i) === x(j)), 'each new edge at one x');
+  assert.deepEqual([...new Set(r.edges.map(([i]) => x(i)))].sort((i, j) => i - j), [32, 64, 96]);
+  assert.equal(text(build(r.mesh, s).solids), text([s]));
+});
+
+test('connect vertices from the point an edge connect made: to the corner below and the far corner, then dragged (a dent)', () => {
+  const s = box(), m = P.meshOf(s), e = (p, q) => P.ek(at(m, p), at(m, q));
+  const r = build(P.connect(m, new Set([e([0, 0, 128], [128, 0, 128]), e([0, 128, 128], [128, 128, 128])])).mesh, s), mm = r.mesh;
+  const v = P.connectVerts(mm, new Set([[64, 0, 128], [0, 0, 0], [128, 128, 128]].map(p => at(mm, p))));
+  assert.equal(v.edges.length, 2, 'one on the front face, one on the top');
+  const again = build(v.mesh, r.solids), k = at(again.mesh, [64, 0, 128]);
+  assert.equal(text(again.solids), text([s]), 'the brush stays as it was');
+  const dent = build(P.moved(again.mesh, (p, i) => (i === k ? [64, 0, 96] : undefined)), again.solids);
+  assert.ifError(dent.error);
+  // a pyramid out of the top: apex the moved point, base the half top and the triangle beside it (a trapezoid)
+  near(dent.solids.reduce((t, x) => t + vol(x), 0), 128 ** 3 - (((128 + 64) / 2) * 128 * 32) / 3, 'volume');
 });

@@ -25,7 +25,7 @@ export const DEFAULTS = {
   // General
   tf2: '', lastFile: '', recentFiles: [], autosaveMinutes: 5, project: 'mymap', prefabDir: '', ignoreGroups: false,
   // Snapping
-  showToolbar: false, snapGrid: true, snapVertex: false, snapEdge: false, snapFace: false, snapRotation: true, rotationStep: 15, rotationStepFine: 5, texLock: true, sizeLock: false, anchor: 'center',
+  showToolbar: false, snapGrid: true, snapVertex: false, snapEdge: false, snapIntersection: false, snapFace: false, snapRotation: true, rotationStep: 15, rotationStepFine: 5, texLock: true, sizeLock: false, anchor: 'center',
   // 3D view
   fov: 75, flySpeed: 900, flySpeedBoost: 3.3, mouseSensitivity: 1, farClip: 60000, renderMode: 'textured', showGrid3d: true, gizmoSize: 1, gizmoSpace: 'world', entityLines: true,
   // Playtest: fov_desired, the last class (0-8) and team picked
@@ -64,6 +64,7 @@ export const SCHEMA = [
     { key: 'snapGrid', label: 'Snap to grid', type: 'bool', hint: 'Shift+W. Off: moves and resizes go in 1 unit steps.' },
     { key: 'snapVertex', label: 'Snap to vertices', type: 'bool', hint: 'Moves pull the nearest moving point onto a vertex of the unselected brushes within 10 pixels.' },
     { key: 'snapEdge', label: 'Snap to edges', type: 'bool', hint: 'Moves pull the nearest moving point onto the nearest point of an unselected edge within 10 pixels.' },
+    { key: 'snapIntersection', label: 'Snap to intersections', type: 'bool', hint: 'Moves pull the nearest moving point onto a point where two unselected edges cross on screen, within 10 pixels. 3D view: only where the edges meet.' },
     { key: 'snapFace', label: 'Snap to faces', type: 'bool', hint: '3D view: moves put the moving point nearest the face under the cursor onto its plane.' },
     { key: 'snapRotation', label: 'Snap rotation', type: 'bool', hint: 'Off: the gizmo and the Rotation fields rotate freely.' },
     { key: 'rotationStep', label: 'Rotation step', type: 'number', min: 1, max: 180, step: 1, hint: 'Degrees.' },

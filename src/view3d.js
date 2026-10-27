@@ -602,7 +602,9 @@ function gizmoMove() {
     if (gz.snap) {
       // a point of the selection onto unselected geometry, along the gizmo's axes
       const qi = gz.q0.clone().invert(), allow = a => new THREE.Vector3(...a).applyQuaternion(qi).toArray().map((x, k) => (act(k) ? x : 0));
-      const hit = gz.snap(t.toArray(), a => new THREE.Vector3(...allow(a)).applyQuaternion(gz.q0).toArray(), mouse);
+      // object snaps test the unsnapped offset, so a target near the pointer counts even off the grid
+      const raw = new THREE.Vector3(...d.map((x, k) => (act(k) ? x : 0))).applyQuaternion(gz.q0).toArray();
+      const hit = gz.snap(raw, a => new THREE.Vector3(...allow(a)).applyQuaternion(gz.q0).toArray(), mouse);
       if (hit) t.set(...hit.t);
       snapMark(hit?.at ?? null);
     }
@@ -1073,6 +1075,7 @@ export function mount(el3d) {
   register('view.slopeTint', { title: 'View: tint steep slopes red (toggle)', run: () => flip('slopeTint', 'slope tint'), on: () => !!cfg.slopeTint });
   register('snap.vertex', { title: 'Snap: to vertices of unselected brushes (toggle)', run: () => flip('snapVertex', 'vertex snapping'), on: () => !!cfg.snapVertex });
   register('snap.edge', { title: 'Snap: to edges of unselected brushes (toggle)', run: () => flip('snapEdge', 'edge snapping'), on: () => !!cfg.snapEdge });
+  register('snap.intersection', { title: 'Snap: to where edges of unselected brushes cross (toggle)', run: () => flip('snapIntersection', 'intersection snapping'), on: () => !!cfg.snapIntersection });
   register('snap.face', { title: 'Snap: onto the face under the cursor, 3D (toggle)', run: () => flip('snapFace', 'face snapping'), on: () => !!cfg.snapFace });
   register('snap.rotation', { title: 'Snap: toggle rotation snapping', run: () => flip('snapRotation', 'rotation snapping'), on: () => !!cfg.snapRotation });
   register('snap.rotationStep', { title: 'Snap: next rotation step (5/15/45/90)', run: () => {

@@ -14,7 +14,7 @@ export function labels(is3d, mirror = false) {
   const out = [[S.tool === 'poly' ? cap(S.mode) : TOOLS[S.tool] ?? cap(S.tool ?? 'select'), 'mode']];
   if (is3d) out.push([S.gizmo ? `${GIZMO[S.gizmo]} ${cfg.gizmoSpace === 'local' ? 'local' : 'world'}` : 'No gizmo', '']);
   out.push([cfg.snapGrid ? `Grid ${S.grid}` : 'Grid off', 'snap']);
-  for (const k of ['Vertex', 'Edge', 'Face']) if (cfg['snap' + k]) out.push([`${k} snap`, 'snap']);
+  for (const k of ['Vertex', 'Edge', 'Intersection', 'Face']) if (cfg['snap' + k]) out.push([`${k} snap`, 'snap']);
   if (cfg.blockout) out.push(['Blockout', 'on']);
   if (mirror) out.push(['Mirror', 'on']);
   if (sel.size) out.push([`${sel.size} selected`, '']);
