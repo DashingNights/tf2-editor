@@ -1,11 +1,11 @@
 # TF2 Editor - roadmap and architecture
 
-Electron + three.js level editor for Team Fortress 2 (Source engine). It edits `.vmf` files and runs the Hammer++ compile tools (`vbsp++`, `vvis++`, `vrad++`) under the hood. Goal: every Hammer++ feature, plus a modern Unreal-style workflow (details panel, 3D gizmo, blockout mode, texture browser, drag-and-drop import, live leak detection).
+Electron + three.js level editor for Team Fortress 2 (Source engine). It edits `.vmf` files and runs the Hammer++ compile tools (`vbsp++`, `vvis++`, `vrad++`) under the hood, or the stock `vbsp`, `vvis`, and `vrad` when those are not installed. Goal: every Hammer++ feature, plus a modern Unreal-style workflow (details panel, 3D gizmo, blockout mode, texture browser, drag-and-drop import, live leak detection).
 
 Hard rules:
 
 - The VMF on disk must stay fully compatible with Hammer++. Opening and saving a map without changes must produce a byte-identical file (`test.js` checks this). Editor-only data (camera bookmarks beyond the VMF `cameras` block, favourites, blockout tags) goes in a sidecar `<map>.vmf.editor.json`, never in the VMF.
-- No build step, no framework, no TypeScript. Plain ES modules loaded by `index.html`. The runtime dependencies are `three` (includes `examples/jsm`) and `dockview-core`; `electron-builder` only packages the installer (`npm run dist`). Do not add dependencies.
+- No build step, no framework, no TypeScript. Plain ES modules loaded by `index.html`. The runtime dependencies are `three` (includes `examples/jsm`) and `dockview-core`; `electron-builder` only packages the installer and the portable exe (`npm run dist`). Do not add dependencies.
 - Keep the existing style: small modules, short functions, comments only where the logic is not obvious.
 - Never save over real maps from tests or scripts. Test against `dev/scratch/testmap.vmf` with `TF2EDITOR_USERDATA=dev/userdata` so settings stay isolated.
 

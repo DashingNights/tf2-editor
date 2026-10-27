@@ -1,6 +1,6 @@
 {
   "name": "tf2-editor",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Level editor for Team Fortress 2: edits .vmf maps and runs the Hammer++ compile tools",
   "author": "Kelvin C",
   "license": "SEE LICENSE IN README.md",
@@ -22,7 +22,31 @@
   },
   "build": {
     "productName": "TF2 Editor",
-    "artifactName": "TF2-Editor-Setup-${version}.${ext}",
-    "files": ["main.js", "preload.cjs", "app.js", "vmf.js", "index.html", "style.css", "src/**/*", "build/icon.png", { "from": "node_modules/three/examples/jsm", "to": "node_modules/three/examples/jsm" }]
+    "win": {
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "artifactName": "TF2-Editor-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "TF2-Editor-Portable-${version}.${ext}"
+    },
+    "files": [
+      "main.js",
+      "preload.cjs",
+      "app.js",
+      "vmf.js",
+      "index.html",
+      "style.css",
+      "src/**/*",
+      "build/icon.png",
+      {
+        "from": "node_modules/three/examples/jsm",
+        "to": "node_modules/three/examples/jsm"
+      }
+    ]
   }
 }

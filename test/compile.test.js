@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 globalThis.window = { api: { settingsPath: '', read: async () => null, write: async () => {}, exists: async () => false } };
-const { resolve, varsFor, modeVars } = await import('../src/compile.js');
+const { resolve, varsFor, modeVars, stockTools } = await import('../src/compile.js');
 const { STEPS, MODES } = await import('../src/settings.js');
 
 const vars = { tf2: 'T', gamedir: 'T\\tf', bin: 'T\\bin\\x64', vmf: 'C:\\m\\a.vmf', mapbase: 'C:\\m\\a', mapname: 'a' };
@@ -73,4 +73,12 @@ test('a map opened by a forward-slash path compiles with Windows paths (cmd copy
   assert.deepEqual(v, { tf2: T, gamedir: T + '\\tf', bin: T + '\\bin\\x64', vmf: 'C:\\maps\\koth_a.vmf', mapbase: 'C:\\maps\\koth_a', mapname: 'koth_a' });
   const cmds = await resolve(STEPS, v, () => {}, async () => ({ prepare: async () => [] }));
   assert.ok(cmds.every(c => !/[A-Z]:\//.test(c)), cmds.join('\n'));
+});
+
+test('a Hammer++ compiler that is not installed falls back to the stock tool in the same folder', async () => {
+  const have = new Set(['T\\bin\\x64\\vbsp.exe', 'T\\bin\\x64\\vrad++.exe', 'T\\bin\\x64\\vrad.exe']), logs = [];
+  const cmds = ['"T\\bin\\x64\\vbsp++.exe" -game "T\\tf" "a.vmf"', '"T\\bin\\x64\\vvis++.exe" a', '"T\\bin\\x64\\vrad++.exe" a', 'cmd /c copy a b'];
+  const out = await stockTools(cmds, async p => have.has(p), s => logs.push(s));
+  assert.deepEqual(out, ['"T\\bin\\x64\\vbsp.exe" -game "T\\tf" "a.vmf"', cmds[1], cmds[2], cmds[3]]);
+  assert.deepEqual(logs, ['vbsp++.exe not found: using vbsp.exe\n']);
 });

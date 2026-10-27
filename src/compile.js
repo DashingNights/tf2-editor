@@ -43,6 +43,16 @@ export async function resolve(steps, vars, log, load = loadPack) {
   return out;
 }
 
+// A step that runs a Hammer++ compiler ("<dir>\vbsp++.exe" ...) that is not installed runs the stock tool of the same
+// name that TF2 ships in that folder instead. exists(path) checks a file.
+export const stockTools = (cmds, exists, log) => Promise.all(cmds.map(async c => {
+  const [, exe, rest] = c.match(/^"([^"]+)\+\+\.exe"(.*)$/is) ?? [];
+  if (!exe || (await exists(`${exe}++.exe`)) || !(await exists(`${exe}.exe`))) return c;
+  const name = exe.split('\\').pop();
+  log(`${name}++.exe not found: using ${name}.exe\n`);
+  return `"${exe}.exe"${rest}`;
+}));
+
 let steps, log, running = false;
 
 function stepsPanel() {
@@ -97,7 +107,7 @@ async function compile() {
   append(`mode: ${mode?.name ?? cfg.compileMode}\n`);
   if (hidden) append(`note: ${hidden} hidden object(s) are not compiled (Unhide all: U)\n`);
   let r, v = vars; // r: { code, leaked }; main writes the Done/FAILED line
-  try { v = await cordoned(vars); r = await api.run(await resolve(cfg.steps, v, append)); } catch (e) { append(`\n${e.message}\n`); } finally { setRunning(false); }
+  try { v = await cordoned(vars); r = await api.run(await stockTools(await resolve(cfg.steps, v, append), api.exists, append)); } catch (e) { append(`\n${e.message}\n`); } finally { setRunning(false); }
   if (r?.leaked) {
     const n = V.nums(await api.read(v.mapbase + '.lin'));
     if (n.length >= 6) setLin(Array.from({ length: (n.length / 3) | 0 }, (_, i) => n.slice(i * 3, i * 3 + 3)));

@@ -8,10 +8,9 @@ A map editor for Team Fortress 2 on Windows. It opens and saves `.vmf` files tha
 
 Download `TF2-Editor-Setup-<version>.exe` from [Releases](https://github.com/DashingNights/tf2-editor/releases/latest) and run it. It installs for your Windows account without admin rights, adds Start menu and desktop shortcuts, and opens the editor. The installer is not code-signed, and Windows SmartScreen may stop it the first time: choose More info, then Run anyway. Uninstall it from Settings > Apps.
 
-You also need:
+To run it without installing, download `TF2-Editor-Portable-<version>.exe` instead and start it from any folder. It needs no admin rights either. It unpacks itself to a temporary folder each time it starts, so it opens a few seconds slower than the installed editor. Both versions keep their settings in the same place.
 
-- Team Fortress 2 from Steam. The editor reads its materials, models, and sounds, and the entity definitions in `bin\tf.fgd`.
-- For compiling: the Tools++ compilers from the Hammer++ project (`vbsp++.exe`, `vvis++.exe`, and `vrad++.exe`) in `Team Fortress 2\bin\x64`.
+You also need Team Fortress 2 from Steam. The editor reads its materials, models, and sounds, and the entity definitions in `bin\tf.fgd`. It compiles with the Tools++ compilers from the Hammer++ project (`vbsp++.exe`, `vvis++.exe`, and `vrad++.exe`) when they are in `Team Fortress 2\bin\x64`, and with the `vbsp.exe`, `vvis.exe`, and `vrad.exe` that TF2 ships in that folder when they are not. The compile log says which one ran.
 
 The editor finds the TF2 folder through Steam's library list. If the texture browser stays empty, open Settings (Ctrl+,) and set TF2 folder under General.
 
@@ -74,7 +73,7 @@ npm install
 npm start
 ```
 
-`npm test` runs the tests. Set `TEST_MAP` to the path of a `.vmf` to add the byte-identical round trip on a real map. `npm run dist` builds the installer into `dist\`. [ROADMAP.md](ROADMAP.md) describes the architecture and the planned features.
+`npm test` runs the tests. Set `TEST_MAP` to the path of a `.vmf` to add the byte-identical round trip on a real map. `npm run dist` builds the installer and the portable exe into `dist\`. [ROADMAP.md](ROADMAP.md) describes the architecture and the planned features.
 
 ## License
 
