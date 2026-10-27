@@ -5,7 +5,7 @@ Electron + three.js level editor for Team Fortress 2 (Source engine). It edits `
 Hard rules:
 
 - The VMF on disk must stay fully compatible with Hammer++. Opening and saving a map without changes must produce a byte-identical file (`test.js` checks this). Editor-only data (camera bookmarks beyond the VMF `cameras` block, favourites, blockout tags) goes in a sidecar `<map>.vmf.editor.json`, never in the VMF.
-- No build step, no framework, no TypeScript. Plain ES modules loaded by `index.html`. The runtime dependencies are `three` (includes `examples/jsm`) and `dockview-core`; `electron-builder` only packages the installer and the portable exe (`npm run dist`). Do not add dependencies.
+- No build step, no framework, no TypeScript. Plain ES modules loaded by `index.html`. The runtime dependencies are `three` (includes `examples/jsm`) and `dockview-core`; `electron-builder` only packages the installer, the portable exe, and the zip (`npm run dist`; `build.extraMetadata` sets the exes' file description to the product name). Do not add dependencies.
 - Keep the existing style: small modules, short functions, comments only where the logic is not obvious.
 - Never save over real maps from tests or scripts. Test against `dev/scratch/testmap.vmf` with `TF2EDITOR_USERDATA=dev/userdata` so settings stay isolated.
 
