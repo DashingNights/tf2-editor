@@ -1,0 +1,3 @@
+/* Stairs, chamfer and roof tools (src/stairtool.js, chamfer.js, rooftool.js): their option bars in the Tools panel */
+.cmdpanel .stairs-panel { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.cmdpanel .stairs-panel[hidden] { display: none; }

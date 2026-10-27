@@ -1,0 +1,11 @@
+/* blockout mode (src/blockout.js): its option bar in the Tools panel, preset dialog */
+.cmdpanel .blockout { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.cmdpanel .blockout[hidden] { display: none; }
+.cmdpanel .blockout select { max-width: 160px; }
+.bo-presets { color-scheme: dark; }
+.bo-presets h3 { margin: 0 0 10px; font-size: 14px; }
+.bo-presets .bo-fields { display: grid; grid-template-columns: auto 160px; gap: 6px 12px; align-items: center; margin-bottom: 6px; }
+.bo-presets .bo-fields label { display: contents; }
+.bo-presets .bo-fields input[type=checkbox] { justify-self: start; }
+.bo-presets select, .bo-presets input:not([type=checkbox]) { background: #121419; color: var(--text); border: 1px solid var(--line); border-radius: 3px; padding: 3px; font: inherit; }
+.bo-presets .row { margin-top: 12px; }

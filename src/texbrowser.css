@@ -1,0 +1,47 @@
+/* Texture browser (src/texbrowser.js): toolbar, folder tree | virtualised grid, footer */
+#textures.tb { display: flex; flex-direction: column; overflow: hidden; }
+.tb select { background: #121419; color: var(--text); border: 1px solid var(--line); border-radius: 3px; padding: 2px 3px; font: inherit; min-width: 0; }
+.tb-bar { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; padding: 6px; border-bottom: 1px solid var(--line); }
+.tb-q { flex: 1 1 120px; }
+.tb-filter { flex: 0 1 auto; max-width: 140px; }
+.tb-size { flex: 0 1 70px; width: 70px; min-width: 40px; accent-color: var(--accent); }
+.tb-main { flex: 1; min-height: 0; display: flex; }
+.tb-foot { padding: 3px 8px; border-top: 1px solid var(--line); color: var(--dim); font-size: 11px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+
+/* Folder tree: the triangle toggles, the row selects; drag the bottom-right corner to widen it */
+.tb-tree { flex: none; width: clamp(130px, 32%, 220px); min-width: 60px; max-width: 70%; resize: horizontal; overflow: auto; scrollbar-width: thin; border-right: 1px solid var(--line); padding: 3px 0; font-size: 12px; }
+.tb-f { display: flex; align-items: center; gap: 3px; padding: 1px 6px 1px 4px; cursor: pointer; white-space: nowrap; user-select: none; }
+.tb-f:hover { background: #2a2e37; }
+.tb-f.on { background: var(--accent); color: #fff; }
+.tb-f i { flex: 0 0 10px; font-style: normal; color: var(--dim); }
+.tb-f.shut i::before { content: '\25B8'; }
+.tb-f.open i::before { content: '\25BE'; }
+.tb-f span { overflow: hidden; text-overflow: ellipsis; }
+.tb-f small { display: inline; margin: 0 0 0 auto; padding-left: 6px; font-size: 10px; }
+.tb-f.on small, .tb-f.on i { color: #fff; }
+
+/* Grid: tiles are absolutely placed in the sizer, which has the full height of all rows */
+.tb-grid { flex: 1; min-width: 0; overflow-y: auto; scrollbar-width: thin; }
+.tb-sizer { position: relative; }
+.tb-tile { position: absolute; cursor: pointer; }
+.tb-img { display: block; object-fit: contain; border-radius: 3px; outline: 1px solid var(--line); }
+.tb-tile:hover .tb-img { outline-color: var(--dim); }
+.tb-tile.on .tb-img { outline: 2px solid var(--accent); }
+.tb-tile span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; height: 26px; line-height: 13px; font-size: 10px; text-align: center; color: var(--dim); overflow: hidden; word-break: break-all; }
+.tb-tile.on span { color: var(--text); }
+.tb-empty { padding: 24px 12px; text-align: center; color: var(--dim); }
+
+
+/* Right-click menu (popover) */
+.tb-menu { position: fixed; inset: auto; margin: 0; padding: 4px; min-width: 190px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 5px; box-shadow: 0 8px 24px #0009; }
+.tb-menu button { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 4px 10px; }
+.tb-menu button:hover:not(:disabled) { background: var(--accent); color: #fff; }
+.tb-menu button:disabled { color: var(--dim); cursor: default; }
+
+/* Find and replace dialog */
+#tb-replace { width: min(480px, calc(100vw - 32px)); color-scheme: dark; }
+#tb-replace h3 { margin: 0 0 12px; font-size: 14px; }
+#tb-replace label { display: grid; grid-template-columns: 44px minmax(0, 1fr); gap: 8px; align-items: center; margin: 6px 0; }
+#tb-replace label > span { color: var(--dim); }
+#tb-replace select { background: #121419; color: var(--text); border: 1px solid var(--line); border-radius: 3px; padding: 3px; font: inherit; }
+#tb-replace .row { margin-top: 14px; }

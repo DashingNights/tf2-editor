@@ -1,0 +1,9 @@
+/* Poly tool (src/polyedit.js): toolbar group, its options in the Tools panel, crossing marquee */
+header .polybar { display: inline-flex; }
+header .polybar button { border-radius: 0; margin-left: -1px; }
+header .polybar button:first-child { border-radius: 4px 0 0 4px; margin-left: 0; }
+header .polybar button:last-child { border-radius: 0 4px 4px 0; }
+.cmdpanel .poly-panel { display: flex; flex-direction: column; gap: 4px; }
+.cmdpanel .poly-panel[hidden] { display: none; }
+.cmdpanel .poly-panel .ops { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+#v-3d .marquee.crossing { border-style: dotted; background: #4fff8c10; }

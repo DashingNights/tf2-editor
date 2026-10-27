@@ -1,0 +1,19 @@
+/* Figma changes panel (src/figmareview.js) */
+.fd-empty { padding: 8px 10px; }
+.fd-head { padding: 6px 10px; border-bottom: 1px solid var(--line); position: sticky; top: 0; background: var(--panel); z-index: 1; }
+.fd-head small { margin: 3px 0; }
+.fd-head label { display: inline-flex; align-items: center; gap: 4px; }
+.fd-end { flex: 1; }
+.fd-gh { display: flex; gap: 4px; align-items: center; padding: 6px 10px 3px; border-top: 1px solid var(--line); }
+.fd-row { display: grid; grid-template-columns: 64px minmax(60px, 1fr) minmax(80px, 2fr) auto auto; gap: 6px; align-items: center; padding: 2px 10px; cursor: pointer; }
+.fd-row:hover { background: #262a33; }
+.fd-row.on { background: #2f3644; box-shadow: inset 2px 0 #ffe14a; }
+.fd-row.no .fd-l, .fd-row.no .fd-d { color: var(--dim); text-decoration: line-through; }
+.fd-row button { padding: 1px 6px; font-size: 11px; }
+.fd-l, .fd-d { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fd-d { color: var(--dim); }
+.fd-t { font-size: 11px; border-radius: 3px; padding: 0 4px; text-align: center; color: #111; }
+.fd-change { background: #3ad46a; }
+.fd-add { background: #7be89a; }
+.fd-remove { background: #ff6a6a; }
+.fd-conflict { background: #ffa020; }

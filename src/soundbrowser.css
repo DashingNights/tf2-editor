@@ -1,0 +1,11 @@
+/* Sounds panel (src/soundbrowser.js): bar, tree and footer come from modelbrowser.css */
+.sb-list { flex: 1; min-width: 0; overflow-y: auto; scrollbar-width: thin; }
+.sb-sizer { position: relative; }
+.sb-row { position: absolute; left: 0; right: 0; height: 22px; display: flex; align-items: center; gap: 6px; padding: 0 6px; cursor: pointer; font-size: 12px; white-space: nowrap; }
+.sb-row:hover { background: #2a2e37; }
+.sb-row span { overflow: hidden; text-overflow: ellipsis; }
+.sb-play { flex: none; width: 20px; height: 18px; padding: 0; font-size: 9px; line-height: 1; }
+.sb-play::before { content: '\25B6'; }
+.sb-row.on { color: #fff; }
+.sb-row.on .sb-play { background: var(--accent); border-color: var(--accent); color: #fff; }
+.sb-row.on .sb-play::before { content: '\25A0'; }

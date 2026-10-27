@@ -1,0 +1,42 @@
+/* Models panel (src/modelbrowser.js); the bar, tree, empty and footer classes are shared with the Sounds panel */
+.panel.mb { display: flex; flex-direction: column; overflow: hidden; }
+.mb select { background: #121419; color: var(--text); border: 1px solid var(--line); border-radius: 3px; padding: 2px 3px; font: inherit; min-width: 0; }
+.mb-bar { display: flex; gap: 4px; align-items: center; padding: 6px; border-bottom: 1px solid var(--line); }
+.mb-bar input { flex: 1 1 120px; }
+.mb-main { flex: 1; min-height: 0; display: flex; }
+.mb-foot { padding: 3px 8px; border-top: 1px solid var(--line); color: var(--dim); font-size: 11px; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+.mb-empty { padding: 24px 12px; text-align: center; color: var(--dim); }
+
+/* Folder tree: the triangle folds, the row filters */
+.mb-tree { flex: none; width: clamp(120px, 32%, 220px); min-width: 60px; max-width: 70%; resize: horizontal; overflow: auto; scrollbar-width: thin; border-right: 1px solid var(--line); padding: 3px 0; font-size: 12px; }
+.mb-f { display: flex; align-items: center; gap: 3px; padding: 1px 6px 1px 4px; cursor: pointer; white-space: nowrap; user-select: none; }
+.mb-f:hover { background: #2a2e37; }
+.mb-f.on { background: var(--accent); color: #fff; }
+.mb-f i { flex: 0 0 10px; font-style: normal; color: var(--dim); }
+.mb-f.shut i::before { content: '\25B8'; }
+.mb-f.open i::before { content: '\25BE'; }
+.mb-f span { overflow: hidden; text-overflow: ellipsis; }
+.mb-f small { margin-left: auto; padding-left: 6px; font-size: 10px; color: var(--dim); }
+.mb-f.on small, .mb-f.on i { color: #fff; }
+
+/* Grid: tiles placed absolutely in the sizer, which is as tall as all rows */
+.mb-grid { flex: 1; min-width: 0; overflow-y: auto; scrollbar-width: thin; }
+.mb-sizer { position: relative; }
+.mb-tile { position: absolute; cursor: pointer; }
+.mb-img { display: block; width: 96px; height: 96px; object-fit: contain; border-radius: 3px; outline: 1px solid var(--line); background: #121419; }
+.mb-img:not([src]) { background: #121419 linear-gradient(90deg, transparent, #ffffff0a, transparent) 0 0 / 200% 100%; }
+.mb-tile.bad .mb-img { background: repeating-linear-gradient(45deg, #121419 0 6px, #1d2027 6px 12px); }
+.mb-tile:hover .mb-img { outline-color: var(--dim); }
+.mb-tile span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; height: 26px; line-height: 13px; font-size: 10px; text-align: center; color: var(--dim); overflow: hidden; word-break: break-all; }
+
+/* Right-click menu (popover) */
+.mb-menu { position: fixed; inset: auto; margin: 0; padding: 4px; min-width: 170px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 5px; box-shadow: 0 8px 24px #0009; }
+.mb-menu button { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 4px 10px; }
+.mb-menu button:hover { background: var(--accent); color: #fff; }
+
+/* Large preview */
+#mb-preview { color-scheme: dark; }
+#mb-preview h3 { margin: 0 0 10px; font-size: 13px; word-break: break-all; }
+#mb-preview canvas { display: block; width: min(512px, 80vw); aspect-ratio: 1; background: #121419; border-radius: 4px; cursor: grab; }
+#mb-preview p { margin: 8px 0 0; max-width: min(512px, 80vw); color: var(--dim); font-size: 11px; word-break: break-all; }
+#mb-preview .row { margin-top: 12px; }

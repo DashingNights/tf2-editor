@@ -1,0 +1,12 @@
+#v-3d .marquee { position: absolute; border: 1px dashed var(--accent); background: #4f8cff14; pointer-events: none; }
+#v-3d .hud { position: absolute; left: 6px; bottom: 4px; max-width: calc(100% - 12px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding: 0 5px; border-radius: 3px; background: #15171cb8; color: var(--dim); font-size: 11px; pointer-events: none; user-select: none; }
+#v-3d .hud .gz { pointer-events: auto; cursor: pointer; text-decoration: underline dotted; }
+#v-3d .hud .gz:hover { color: var(--text); }
+#v-3d .snapmark { position: absolute; left: 0; top: 0; width: 12px; height: 12px; box-sizing: border-box; border: 2px solid #33ccff; pointer-events: none; }
+#v-3d .snapmark[hidden] { display: none; }
+/* the editing state in each viewport (src/viewhud.js) */
+.pane .vhud { position: absolute; top: 4px; right: 6px; max-width: calc(100% - 200px); display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 3px; pointer-events: none; user-select: none; z-index: 2; }
+.pane .vhud span { padding: 0 6px; border-radius: 3px; background: #15171cc8; color: var(--dim); font-size: 11px; line-height: 17px; white-space: nowrap; }
+.pane .vhud .mode { background: var(--accent); color: #fff; font-weight: 600; }
+.pane .vhud .snap { color: #9fe2ff; }
+.pane .vhud .on { color: #ffd479; }

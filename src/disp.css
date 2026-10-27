@@ -1,0 +1,10 @@
+/* Displacement panel (src/disp.js). */
+#displacement .dp { padding: 6px 10px; }
+#displacement .dp-info { margin: 0 0 6px; }
+#displacement .dp-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 6px; align-items: center; margin: 4px 0; }
+#displacement .dp-row > label { color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#displacement .dp-c { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-width: 0; }
+#displacement .dp-c > select, #displacement .dp-c > input { flex: 1 1 90px; min-width: 0; }
+#displacement select { background: #121419; color: var(--text); border: 1px solid var(--line); border-radius: 3px; padding: 2px 3px; font: inherit; }
+#displacement .num { text-align: right; }
+#displacement hr { border: 0; border-top: 1px solid var(--line); margin: 8px 0; }

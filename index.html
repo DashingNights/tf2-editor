@@ -1,0 +1,73 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-u1ddxonMk/ojMNP2NdHvNMWCqxBPIq2FsGT2As88iJw='; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:">
+<title>TF2 Editor</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="src/view3d.css">
+<link rel="stylesheet" href="src/details.css">
+<link rel="stylesheet" href="src/outliner.css">
+<link rel="stylesheet" href="src/palette.css">
+<link rel="stylesheet" href="src/settingsui.css">
+<link rel="stylesheet" href="src/texbrowser.css">
+<link rel="stylesheet" href="src/aids.css">
+<link rel="stylesheet" href="src/blockout.css">
+<link rel="stylesheet" href="src/import.css">
+<link rel="stylesheet" href="src/organize.css">
+<link rel="stylesheet" href="src/modelbrowser.css">
+<link rel="stylesheet" href="src/soundbrowser.css">
+<link rel="stylesheet" href="src/brushtools.css">
+<link rel="stylesheet" href="src/disp.css">
+<link rel="stylesheet" href="src/stairs.css">
+<link rel="stylesheet" href="src/figmadiff.css">
+<link rel="stylesheet" href="src/polyedit.css">
+<link rel="stylesheet" href="src/tools.css">
+<link rel="stylesheet" href="src/playtest.css">
+<script type="importmap">{ "imports": { "three": "./node_modules/three/build/three.module.js", "three/addons/": "./node_modules/three/examples/jsm/" } }</script>
+</head>
+<body>
+<header>
+  <button data-cmd="newMap">New</button>
+  <button data-cmd="open">Open</button>
+  <button data-cmd="save">Save</button>
+  <span class="sep"></span>
+  <button data-cmd="undo">Undo</button>
+  <button data-cmd="redo">Redo</button>
+  <span class="sep"></span>
+  <button data-cmd="select" data-tool="select">Select (V)</button>
+  <button data-cmd="block" data-tool="block">Block (B)</button>
+  <button data-cmd="entity" data-tool="entity">Entity (Shift+E)</button>
+  <button data-cmd="tool.clip" data-tool="clip">Clip</button>
+  <span class="polybar" title="Edit vertices, edges or faces of the selected brushes (1, 2, 3; again or 4: objects)"><button data-cmd="mode.vertex" data-level="vertex">Vertex</button><button data-cmd="mode.edge" data-level="edge">Edge</button><button data-cmd="mode.face" data-level="face">Face</button></span>
+  <button data-cmd="tool.stairs" data-tool="stairs" title="Stairs between two edges (Shift+S)">Stairs</button>
+  <button data-cmd="tool.chamfer" data-tool="chamfer" title="Chamfer an outside corner or fill an inside one (Shift+C)">Chamfer</button>
+  <button data-cmd="tool.roof" data-tool="roof" title="Roof between two walls (Shift+R)">Roof</button>
+  <button data-cmd="tool.cordon" data-tool="cordon">Cordon</button>
+  <button data-cmd="cordon.toggle" class="cordon-toggle">Cordon off</button>
+  <button data-cmd="select.ignoreGroups" id="ig">Ig</button>
+  <button data-cmd="mirror.toggle" id="mirror">Mirror</button>
+  <button data-cmd="playtest" title="Walk the map as a TF2 class (F5; Shift: start at the 3D camera)">Playtest</button>
+  <span class="sep"></span>
+  Grid <button data-cmd="gridDown">[</button><b id="grid"></b><button data-cmd="gridUp">]</button>
+  <span class="sep"></span>
+  <button data-cmd="compile" class="primary">Compile (F9)</button>
+  <button data-cmd="settings.open" class="end" title="Settings (Ctrl+,)" aria-label="Settings">&#9881;</button>
+</header>
+<main id="workspace"></main>
+<footer id="status"></footer>
+<!-- Panel contents: the modules mount into these, then src/layout.js moves them into the dock. -->
+<div id="panels" hidden>
+  <div class="pane" id="v-3d"><canvas tabindex="0"></canvas><label>3D - hold right mouse: look + WASD/QE fly</label></div>
+  <div class="pane" id="v-top"><canvas></canvas><label>Top (X/Y)</label></div>
+  <div class="pane" id="v-front"><canvas></canvas><label>Front (Y/Z)</label></div>
+  <div class="pane" id="v-side"><canvas></canvas><label>Side (X/Z)</label></div>
+  <div class="panel" id="details"></div>
+  <div class="panel" id="outliner"></div>
+  <div class="panel" id="compile"></div>
+</div>
+<div id="palette" hidden></div>
+<script src="node_modules/dockview-core/dist/dockview-core.js"></script>
+<script type="module" src="app.js"></script>
+</body>
+</html>

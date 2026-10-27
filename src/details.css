@@ -1,0 +1,56 @@
+#details .dt-head { position: sticky; top: 0; z-index: 2; background: var(--panel); padding: 6px 10px; border-bottom: 1px solid var(--line); }
+#details .dt-head .selinfo { margin: 0 0 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#details .dt-head .selinfo b { color: var(--text); }
+#details .search { width: 100%; }
+#details select { background: #121419; color: var(--text); border: 1px solid var(--line); border-radius: 3px; padding: 2px 3px; font: inherit; min-width: 0; }
+
+/* Label | controls. The controls column never goes below 236 px (three readable XYZ fields and the reset arrow or yaw
+   dial on one line); when the panel narrows the label column gives way down to 72 px, then the dock stops the panel
+   (details minimumWidth in src/layout.js: 10 + 72 + 6 + 236 + 10 px plus a thin scrollbar). Labels ellipsize; row()
+   puts the full text in title. */
+#details .dr { display: grid; grid-template-columns: minmax(72px, 38%) minmax(236px, 1fr); gap: 6px; align-items: center; margin: 3px 0; }
+#details .dr[hidden] { display: none; }
+#details .dr > label { min-width: 0; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: default; }
+#details .dr > label.scrub { cursor: ew-resize; user-select: none; touch-action: none; } /* drags its row's number */
+#details .dc { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-width: 0; }
+#details .dc > input:not([type=checkbox]):not([type=color]), #details .dc > select { flex: 1 1 0; width: 100%; min-width: 40px; }
+#details .num { text-align: right; }
+#details .ib { padding: 1px 6px; }
+#details .bad { color: #ff6b6b; border-color: #8a3030; }
+
+/* XYZ fields: the coloured label scrubs the value */
+#details .dc:has(> .axf) { flex-wrap: nowrap; }
+#details .axf { flex: 1 1 0; display: flex; min-width: 64px; }
+#details .axf input { flex: 1 1 0; min-width: 0; width: 100%; padding: 3px; border-radius: 0 3px 3px 0; }
+#details .ax { flex: 0 0 15px; display: grid; place-items: center; font-size: 10px; font-weight: 700; color: #fff; border-radius: 3px 0 0 3px; cursor: ew-resize; user-select: none; touch-action: none; }
+#details .ax0 { background: #b8433a; }
+#details .ax1 { background: #3f8f4c; }
+#details .ax2 { background: #3b6fc4; }
+
+/* Material names: the buttons wrap to the next line before the field gets too narrow to read */
+#details .dr .dc > input[list=mats] { min-width: 140px; }
+#details .thumb { width: 22px; height: 22px; border-radius: 2px; background: #121419; object-fit: cover; }
+#details .thumb:not([src]) { visibility: hidden; width: 0; }
+#details .tag { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; background: #2a2e37; border: 1px solid var(--line); border-radius: 9px; padding: 0 7px; font-size: 11px; }
+#details .flags { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px 8px; width: 100%; }
+#details .flags label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#details input[type=color] { width: 34px; height: 22px; padding: 0 2px; background: #121419; border: 1px solid var(--line); border-radius: 3px; }
+#details .lock { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--dim); }
+#details .dial { width: 32px; height: 32px; cursor: crosshair; flex: none; }
+#details.picking .dt-head .selinfo::after { content: '  - click the target entity'; color: var(--accent); }
+
+/* Outputs: one connection per two-line row */
+#details .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 6px; }
+#details .ds:has(> .conn) { overflow-x: auto; }
+#details .conn { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 3px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--line); }
+#details .conn > input:nth-of-type(-n+3) { grid-column: span 2; }
+#details .conn > input:nth-of-type(4) { grid-column: span 3; }
+#details .conn input:not([type=checkbox]) { min-width: 0; width: 100%; }
+#details .conn > input[type=checkbox], #details .conn > button { justify-self: center; }
+#details .conn.head { color: var(--dim); font-size: 11px; border: 0; padding-bottom: 0; }
+#details .conn.head > span:nth-child(-n+3) { grid-column: span 2; }
+#details .conn.head > span:nth-child(4) { grid-column: span 3; }
+#details .ds > button { margin-top: 6px; }
+#details .inrow { padding: 3px 4px; border-radius: 3px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#details .inrow:hover { background: #2a2e37; }
+body:has(#details.picking) .pane canvas { cursor: crosshair; }

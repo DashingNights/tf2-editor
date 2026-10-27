@@ -1,0 +1,25 @@
+#outliner .search { width: 100%; }
+#outliner .tree { height: 300px; min-height: 60px; overflow-y: auto; resize: vertical; background: #121419; border: 1px solid var(--line); border-radius: 3px; user-select: none; }
+#outliner .spacer { position: relative; }
+#outliner .win { position: absolute; left: 0; right: 0; top: 0; }
+#outliner .r { height: 20px; display: flex; align-items: center; gap: 6px; padding-right: 6px; white-space: nowrap; cursor: default; }
+#outliner .r span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+#outliner .r small, #outliner .filters small, #outliner .vg small { display: inline; margin: 0; flex: none; }
+#outliner .r:hover { background: #22262e; }
+#outliner .r.on { background: #2b4170; }
+#outliner .r.dim { opacity: 0.45; }
+#outliner .grp { font-weight: 600; }
+#outliner .grp::before { content: ''; flex: none; border: 4px solid transparent; border-left-color: var(--dim); margin-right: -4px; transform-origin: 25% 50%; }
+#outliner .grp.open::before { transform: rotate(90deg); }
+#outliner .filters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 10px; }
+#outliner .filters label { margin: 1px 0; flex-wrap: nowrap; min-width: 0; }
+#outliner .filters span, #outliner .vg .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#outliner .vg { flex-wrap: nowrap; }
+#outliner .vg { margin: 1px 0; }
+#outliner span.nm { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#outliner span.nm:hover { color: #fff; }
+.ctxmenu { inset: auto; margin: 0; padding: 4px; min-width: 210px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 5px; box-shadow: 0 6px 24px #000a; }
+.ctxmenu button { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 4px 10px; }
+.ctxmenu button:hover:enabled, .ctxmenu button:focus-visible { background: var(--accent); color: #fff; outline: none; }
+.ctxmenu button:disabled { color: var(--dim); opacity: 0.6; cursor: default; }
+.ctxmenu hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }

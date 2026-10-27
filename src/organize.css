@@ -1,0 +1,23 @@
+/* Cordon, prefabs, entity report and the shared form (src/cordon.js, prefabs.js, report.js). */
+.org-form { width: min(420px, calc(100vw - 32px)); }
+.org-form label { display: grid; grid-template-columns: 170px minmax(0, 1fr); gap: 8px; align-items: center; margin: 0 0 8px; }
+.org-form label > input[type=checkbox] { justify-self: start; margin: 0; }
+
+.org-report { position: fixed; inset: 56px 16px auto auto; margin: 0; width: min(480px, calc(100vw - 32px)); z-index: 50; padding: 12px 14px; }
+.org-report p { margin: 0 0 8px; }
+.org-report small { color: var(--dim); }
+.org-report .row { justify-content: stretch; }
+.org-report .row:last-child { justify-content: flex-end; margin-top: 8px; }
+.org-report select { background: #121419; color: var(--text); border: 1px solid var(--line); border-radius: 3px; padding: 3px; font: inherit; }
+.org-table { max-height: min(56vh, 520px); overflow: auto; border: 1px solid var(--line); scrollbar-width: thin; }
+.org-table table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.org-table th { position: sticky; top: 0; background: var(--panel); text-align: left; font-weight: 600; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+.org-table td { padding: 3px 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; cursor: pointer; }
+.org-table tr:hover td { background: #262a33; }
+.org-table tr.on td { background: var(--accent); color: #fff; }
+
+.pf-head { padding: 6px 8px; border-bottom: 1px solid var(--line); margin: 0; }
+.pf-list { padding: 4px 8px; }
+.pf-list > small { color: var(--dim); display: block; padding: 6px 0; }
+.pf-row > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pf-row > button { padding: 2px 7px; }

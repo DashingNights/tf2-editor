@@ -1,0 +1,3 @@
+/* scale aids (src/aids.js): measurement labels over the 3D view */
+#v-3d .aid-label { position: absolute; transform: translate(-50%, -140%); padding: 1px 5px; border-radius: 3px; background: #15171cd8; color: #ffd84a; font: 11px Consolas, monospace; white-space: pre; pointer-events: none; user-select: none; }
+#v-3d.measuring canvas { cursor: crosshair; }

@@ -1,0 +1,12 @@
+.palette { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); width: min(520px, 90vw); z-index: 10; padding: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 8px 30px #000a; }
+.palette input { width: 100%; padding: 6px 8px; }
+.palette ul { list-style: none; margin: 6px 0 0; padding: 0; max-height: 50vh; overflow-y: auto; }
+.palette li { display: flex; justify-content: space-between; gap: 12px; padding: 4px 8px; border-radius: 3px; cursor: pointer; }
+.palette li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.palette li:hover { background: #2a2e37; }
+.palette li.on { background: var(--accent); color: #fff; }
+.palette li.off { color: var(--dim); opacity: 0.5; cursor: default; }
+.palette li.off.on { background: #2a2e37; }
+.palette li.recent + li:not(.recent) { margin-top: 5px; box-shadow: 0 -3px 0 -2px var(--line); }
+.palette kbd { color: var(--dim); font: 11px Consolas, monospace; flex: none; text-align: right; }
+.palette li.on kbd { color: #fff; }

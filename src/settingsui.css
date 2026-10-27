@@ -1,0 +1,33 @@
+/* Settings dialog (src/settingsui.js). Fields shrink with the dialog down to min-width; below that the dialog stops shrinking. */
+#settings { width: min(860px, calc(100vw - 32px)); height: min(640px, calc(100vh - 32px)); min-width: 460px; min-height: 300px; padding: 0; overflow: hidden; color-scheme: dark; }
+#settings[open] { display: grid; grid-template-columns: 160px minmax(0, 1fr); }
+#settings .st-side { display: flex; flex-direction: column; gap: 8px; padding: 12px 10px; border-right: 1px solid var(--line); min-width: 0; }
+#settings .st-side input { width: 100%; }
+#settings nav { display: flex; flex-direction: column; gap: 2px; }
+#settings nav button { text-align: left; background: none; border-color: transparent; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#settings nav button:hover { background: #2a2e37; }
+#settings nav button.on { background: var(--accent); color: #fff; }
+#settings .st-form { overflow-y: auto; padding: 4px 44px 16px 16px; min-width: 0; }
+#settings .st-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 12px 0 4px; }
+#settings h3 { margin: 0; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#settings .st-head button { flex: none; }
+#settings .st-close { position: absolute; top: 8px; right: 10px; padding: 2px 7px; }
+
+#settings .st-row { display: grid; grid-template-columns: minmax(70px, 2fr) minmax(48px, 3fr); gap: 2px 12px; align-items: center; padding: 5px 0; border-bottom: 1px solid var(--line); }
+#settings .st-row > label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#settings .st-row > small { grid-column: 2; margin: 0; overflow-wrap: anywhere; }
+#settings .st-row > input:not([type=checkbox]), #settings .st-row > select { width: 100%; max-width: 340px; min-width: 0; }
+#settings .st-row > input[type=checkbox] { justify-self: start; margin: 3px 0; }
+#settings .st-row > input[type=number] { max-width: 140px; }
+#settings .st-row > input[type=color] { max-width: 60px; height: 24px; padding: 0 2px; }
+#settings select { background: #121419; color: var(--text); border: 1px solid var(--line); border-radius: 3px; padding: 3px; font: inherit; }
+#settings .st-step input { margin: 0 4px 0 0; vertical-align: -2px; }
+#settings .st-note { color: var(--dim); display: block; margin: 8px 0; }
+#settings .st-bad { color: #ff6b6b; }
+
+/* Keys: the chord button enters capture mode on click */
+#settings .st-ctl { display: flex; gap: 4px; min-width: 0; }
+#settings .st-chord { flex: 1 1 auto; max-width: 300px; min-width: 0; text-align: left; font: 12px Consolas, monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#settings .st-chord.on { border-color: var(--accent); color: var(--accent); }
+#settings .st-reset { flex: none; padding: 1px 6px; }
+#settings .st-reset:disabled { opacity: 0.35; cursor: default; }

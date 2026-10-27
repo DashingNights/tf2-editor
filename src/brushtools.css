@@ -1,0 +1,8 @@
+/* Hollow and Transform dialogs (src/brushtools.js). */
+.bt-dialog { min-width: 280px; color-scheme: dark; }
+.bt-dialog h3 { margin: 0 0 12px; font-size: 14px; }
+.bt-dialog .bt-field { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 6px; align-items: center; margin: 0 0 6px; }
+.bt-dialog .bt-modes { justify-content: flex-start; gap: 12px; margin: 0 0 10px; }
+.bt-dialog .bt-check { display: block; margin: 8px 0 12px; color: var(--dim); }
+.bt-dialog .bt-check:has(:disabled) { opacity: 0.5; }
+.bt-dialog input:invalid { border-color: #ff6b6b; }

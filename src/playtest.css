@@ -1,0 +1,11 @@
+/* Playtest (src/playtest.js): HUD over the 3D view, top left; the class picker */
+#v-3d .playtest-hud { position: absolute; top: 4px; left: 6px; max-width: calc(100% - 12px); padding: 3px 6px; border-radius: 3px; background: #15171cc8; color: var(--text); font: 11px Consolas, monospace; white-space: pre; overflow: hidden; pointer-events: none; user-select: none; }
+#v-3d .playtest-hud[hidden], #v-3d.playing > label, #v-3d.playing > .hud { display: none; }
+dialog.playtest-pick h3 { margin: 0 0 10px; font-size: 14px; }
+dialog.playtest-pick .teams { display: flex; gap: 6px; margin-bottom: 10px; }
+dialog.playtest-pick .teams button { flex: 1; }
+dialog.playtest-pick .teams .blu.on { background: #3d6fb8; border-color: #5b8ad0; }
+dialog.playtest-pick .teams .red.on { background: #b8413d; border-color: #d05b57; }
+dialog.playtest-pick .classes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 10px; }
+dialog.playtest-pick .classes button { text-align: left; }
+dialog.playtest-pick label { display: flex; align-items: center; gap: 4px; }

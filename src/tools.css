@@ -1,0 +1,59 @@
+/* Tools panel (src/tools.js): rollouts of the active tool's options and of command buttons */
+.cmdpanel { overflow-y: auto; padding: 4px 10px 8px; font-size: 12px; }
+.panel.cmdpanel, .cmdpanel .cp-body { scrollbar-width: none; } /* they still scroll with the wheel, without a bar */
+.cmdpanel .tr { border-bottom: 1px solid var(--line); padding-top: 4px; }
+.cmdpanel .tr[hidden], .cmdpanel .tr:has(> .tb > [hidden]:only-child), .cmdpanel .tr:has(> .tb:empty) { display: none; }
+.cmdpanel summary { padding: 2px 0 4px; user-select: none; }
+.cmdpanel .tb { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding-bottom: 6px; }
+.cmdpanel .row { display: flex; flex: 0 1 auto; flex-wrap: wrap; align-items: center; gap: 2px; }
+.cmdpanel .tb > .row { display: contents; } /* a group's buttons wrap one by one, filling each line */
+.cmdpanel .tb > .row > .cap { display: none; } /* the group's name is its tooltip */
+.cmdpanel button { padding: 2px 8px; font-size: 11px; }
+.cmdpanel button.na { opacity: 0.45; }
+.cmdpanel select, .cmdpanel input[type=number] { background: #121419; color: var(--text); border: 1px solid var(--line); border-radius: 3px; padding: 1px 4px; font: inherit; }
+/* the tools' option bars (poly edit, stairs, chamfer, roof, blockout): their rollout title replaces the chip */
+.cmdpanel .slots .chip { display: none; }
+.cmdpanel .slots label { display: inline-flex; align-items: center; gap: 3px; white-space: nowrap; cursor: pointer; }
+.cmdpanel .slots input[type=number] { width: 52px; }
+.cmdpanel .slots .msg { flex-basis: 100%; color: var(--dim); }
+.cmdpanel .slots .msg.bad { color: #ff7a7a; }
+/* Custom panels (src/custompanels.js): sections of buttons, rollout copies and tool option bars; edit mode */
+.cpanel .cp-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 2px 0 6px; border-bottom: 1px solid var(--line); }
+.cpanel .cp-head b { flex: 1; }
+.cpanel .cp-title { flex: 1; min-width: 80px; }
+.cpanel .cs { border-bottom: 1px solid var(--line); padding-top: 4px; }
+.cpanel .cs > .tb { min-height: 26px; }
+.cpanel .cs-head { display: flex; gap: 4px; align-items: center; padding: 2px 0 4px; }
+.cpanel .cs-head input { flex: 1; min-width: 60px; }
+.cpanel .ci { display: inline-flex; align-items: center; gap: 6px; margin: 2px 4px 2px 0; padding: 1px 2px 1px 8px; border: 1px dashed var(--line); border-radius: 4px; cursor: grab; }
+.cpanel .ci button { padding: 0 6px; }
+.cpanel .cp-roll { display: flex; flex-direction: column; gap: 4px; padding: 2px 0 6px; }
+.cpanel .cp-cap { color: var(--dim); font-size: 11px; }
+.cpanel .cp-add { position: relative; display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.cpanel .cp-search { flex: 1; min-width: 140px; }
+.cpanel .cp-results { position: absolute; top: 100%; left: 0; right: 0; z-index: 5; max-height: 260px; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 4px; }
+.cpanel .cp-results:empty { display: none; }
+.cpanel .cp-results button { display: block; width: 100%; text-align: left; border: 0; border-radius: 0; background: none; }
+.cpanel .cp-results button:hover { background: var(--accent); color: #fff; }
+.cpanel .cp-hint { color: var(--dim); }
+.cpanel input:not([type]), .cpanel input[type=text] { background: #121419; color: var(--text); border: 1px solid var(--line); border-radius: 3px; padding: 2px 4px; font: inherit; }
+.cp-menu .cp-menu-cap { color: var(--dim); padding: 2px 10px 4px; }
+/* a custom panel: header, then its own dock (its tabs on top; shown while it holds panels, and in edit mode), then
+   the sections, which scroll */
+.cpanel { display: flex; flex-direction: column; overflow: hidden; padding: 0; }
+.cpanel > .cp-top { flex: none; padding: 4px 10px 0; }
+.cpanel > .cp-dock { position: relative; flex: 1 1 0; min-height: 160px; }
+.cpanel > .cp-dock[hidden] { display: none; }
+.cpanel > .cp-body { flex: 0 1 auto; max-height: 45%; overflow-y: auto; padding: 4px 10px 8px; }
+.cpanel > .cp-body:empty { display: none; }
+.cpanel:has(> .cp-dock[hidden]) > .cp-body { flex: 1 1 auto; max-height: none; }
+.cp-water { display: grid; place-items: center; height: 100%; box-sizing: border-box; padding: 12px; border: 2px dashed var(--line); color: var(--dim); text-align: center; }
+.cpanel > .cp-dock.cp-drop .cp-water { border-color: var(--accent); color: var(--text); }
+/* command buttons: icon and name, as wide as that; they wrap at the panel's width */
+.cmdpanel button.ib { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 6px 0 5px; flex: none; white-space: nowrap; }
+.cmdpanel button.ib .ico { flex: none; pointer-events: none; }
+.cmdpanel .gridval { min-width: 22px; text-align: center; }
+/* a section panel (tools-<section>): its rows, a little apart */
+.cmdpanel[data-panel^="tools-"] > .tb { padding-top: 4px; gap: 3px; }
+#tools > .slots:not(:has(.tb > :not([hidden])))::before { content: 'Tool options show here: vertex, edge, face (1 2 3), stairs, chamfer, roof, blockout.'; display: block; padding-top: 4px; color: var(--dim); }
+.cmdpanel .slots .tb > *, .cpanel .cs > .tb > :not(.row, button) { flex: 1 1 100%; } /* option bars and blocks take the full width */
