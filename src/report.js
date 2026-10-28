@@ -3,14 +3,21 @@
 // modules share.
 import * as V from '../vmf.js';
 import * as W from './weldgeo.js';
+import * as C from './mapcheck.js';
+import * as F from './fgd.js';
 import { on } from './bus.js';
-import { doc, sel, cache, objects, nodesOf, boxOf, setSelection, deleteSel, showWorld, setCursor, groupOf, change } from './state.js';
+import { S, doc, sel, cache, objects, nodesOf, boxOf, setSelection, deleteSel, showWorld, setCursor, groupOf, change, nextId } from './state.js';
 import { register } from './commands.js';
+import { cfg, setCfg } from './settings.js';
+import { getVmt } from './materials.js';
+import { assets, norm } from './models.js';
 import { focus } from './view3d.js';
 import { show } from './layout.js';
 import { vgIds } from './outliner.js';
-import { ask, notice } from './dialog.js';
+import { notice } from './dialog.js';
 import { el } from './dom.js';
+
+const api = window.api;
 
 // Modal form: fields [{ key, label, value, type: 'text' | 'checkbox' }]. Resolves { key: value } on OK (Enter), null
 // on Cancel (Escape).
@@ -31,9 +38,9 @@ export function form(title, fields, ok = 'OK') {
   });
 }
 
-// Selects an object's visible nodes and frames the object (hidden too).
-function goTo(o) {
-  const cs = nodesOf(o).map(n => cache.get(n)).filter(Boolean);
+// Selects the objects' visible nodes and frames the objects (hidden ones too).
+function goTo(...os) {
+  const cs = os.flatMap(nodesOf).map(n => cache.get(n)).filter(Boolean);
   if (!cs.length) return;
   setSelection(cs.filter(c => c.visible).map(c => c.node));
   focus(boxOf(cs));
@@ -128,22 +135,87 @@ function sameVisgroup() {
 }
 
 // ---------- check for problems ----------
-// Hammer's Check for problems (Alt+P). So far the plane checks of weldgeo.js: brush sides on almost the same plane (black
-// faces in game) and sides that repeat their brush's plane (vbsp: "duplicate plane"). Weld planes fixes both. Hidden
-// objects count too: they compile once shown.
+// Hammer's Check for problems (Alt+P): the plane checks of weldgeo.js (brush sides on almost the same plane, black faces
+// in game; sides that repeat their brush's plane, vbsp's "duplicate plane"), then those of mapcheck.js. A dialog beside
+// the views lists them: Select frames one, Fix repairs the simple ones (one undo step each), Weld runs Weld planes.
+// Hidden objects count too: they compile once shown.
 const solidsIn = n => n.children.flatMap(c => (c.name === 'solid' ? [c] : ['world', 'entity', 'hidden'].includes(c.name) ? solidsIn(c) : []));
 
+// The map's problems, the mapcheck.js ones with what they need from the game: tf.fgd, the VMTs of the materials in use
+// and the model index (those checks are left out without a TF2 folder).
+async function problems() {
+  const solids = solidsIn(doc.root), { groups, duplicates } = W.check(solids), tf2 = cfg.tf2;
+  const ovs = objects().filter(o => o.name === 'entity' && V.get(o, 'classname') === 'info_overlay').map(o => V.get(o, 'material') ?? '');
+  const mats = [...new Set([...solids.flatMap(s => V.kids(s, 'side').map(x => V.get(x, 'material') ?? '')), ...ovs].map(m => m.toLowerCase()))];
+  const [vmts, fgd, index] = tf2 ? await Promise.all([
+    Promise.all(mats.map(m => getVmt(m).then(v => [m, v], () => [m, null]))).then(a => new Map(a)),
+    F.shared(`${tf2}\\bin\\tf.fgd`, api.read).catch(() => null),
+    assets().catch(() => null),
+  ]) : [new Map(), null, null];
+  return [
+    ...groups.map(g => ({ kind: 'plane', objs: [...new Set(g.sides.map(s => s.solid))], weld: true, text: `${g.sides.length} brush sides on almost, but not exactly, the same plane: vbsp can light such a face from behind, and it comes out black in game` })),
+    ...duplicates.map(d => ({ kind: 'plane', objs: [d.solid], weld: true, text: 'A brush side repeats the plane of another side of its brush (vbsp: duplicate plane)' })),
+    ...C.problems(doc.root, {
+      fgd, nextId, ignoreKeys: new Set(cfg.checkIgnoreKeys ?? []),
+      contents: m => C.contentsOf(vmts.get(m.toLowerCase())?.kv),
+      hasMaterial: tf2 ? m => !!vmts.get(m.toLowerCase()) : null,
+      hasModel: index?.size ? m => index.has(norm(m)) : null,
+    }),
+  ];
+}
+
+const CSS = `.org-problems { width: min(820px, calc(100vw - 32px)); }
+.org-problems .org-table td { white-space: normal; max-width: none; vertical-align: top; }
+.org-problems .org-table td:first-child, .org-problems .org-table td:last-child { white-space: nowrap; }
+.org-problems .org-table td button { padding: 1px 8px; margin-left: 4px; }`;
+
+let chk = null; // the open Check for problems dialog: { run }
 async function checkProblems() {
-  const { groups, duplicates } = W.check(solidsIn(doc.root));
-  const brushes = new Set([...groups.flatMap(g => g.sides.map(s => s.solid)), ...duplicates.map(d => d.solid)]);
-  if (!brushes.size) return notice('No problems found.');
-  const found = [
-    groups.length && `${groups.length} groups of brush sides lie on almost, but not exactly, the same plane (${groups.reduce((n, g) => n + g.sides.length, 0)} sides). vbsp can light such a face from behind, and it comes out black in game.`,
-    duplicates.length && `${duplicates.length} brush sides repeat another side of their brush (vbsp: duplicate plane).`,
-  ].filter(Boolean);
-  const a = await ask(`${found.join(' ')} Weld planes moves each group onto one plane and removes the repeated sides, as one undo step.`, ['Weld planes', `Select ${brushes.size} brushes`, 'Close']);
-  if (a === 0) weldPlanes();
-  else if (a === 1) setSelection(brushes);
+  if (chk) return chk.run();
+  const list = await problems();
+  if (!list.length) return notice('No problems found.');
+  problemsDialog(list);
+}
+
+// Not modal, so the views stay usable. A change to the map after the check makes the list stale: then a Fix click
+// checks again first.
+function problemsDialog(list) {
+  const body = el('tbody'), count = el('small'), stale = el('small', { hidden: true, textContent: ' The map changed since this check: a Fix click checks again first.' });
+  const fixAll = el('button', { title: 'Every Fix in the list as one undo step, then Weld planes' });
+  let busy = false; // our own fixes change the map too
+  const fix = fs => { busy = true; try { change(take => fs.forEach(f => f(take))); } finally { busy = false; } };
+  const weld = () => { busy = true; try { weldPlanes(); } finally { busy = false; } };
+  const act = f => () => { if (stale.hidden) f(); run(); };
+  const btn = (textContent, title, f) => el('button', { textContent, title, onclick: e => { e.stopPropagation(); f(); } });
+  const ignore = keys => { setCfg('checkIgnoreKeys', [...new Set([...(cfg.checkIgnoreKeys ?? []), ...keys.map(k => k.toLowerCase())])]); run(); };
+  const draw = () => {
+    const n = list.filter(p => p.fix || p.weld).length;
+    count.textContent = list.length ? `${list.length} problems` : 'No problems found.';
+    fixAll.textContent = `Fix all (${n})`;
+    fixAll.disabled = !n;
+    body.replaceChildren(...list.map(p => {
+      const tr = el('tr', {}, el('td', { textContent: p.objs.length > 1 ? `${p.objs.length} brushes` : p.objs[0] ? C.label(p.objs[0]) : '' }), el('td', { textContent: p.text }),
+        el('td', {}, btn('Select', 'Select it and frame it in the views', () => goTo(...p.objs)),
+          ...(p.fix ? [btn('Fix', 'Repair it (one undo step)', act(() => fix([p.fix])))] : []),
+          ...(p.weld ? [btn('Weld', 'Weld planes: every group and repeated side, as one undo step', act(weld))] : []),
+          ...(p.keys ? [btn('Ignore', `Leave ${p.keys.join(', ')} out of this check from now on (Map: check every keyvalue against the FGD again)`, () => ignore(p.keys))] : [])));
+      tr.onclick = () => goTo(...p.objs);
+      return tr;
+    }));
+  };
+  const run = async () => { list = await problems(); stale.hidden = true; if (d.open) draw(); };
+  fixAll.onclick = act(() => { const fs = list.filter(p => p.fix).map(p => p.fix); if (fs.length) fix(fs); if (list.some(p => p.weld)) weld(); });
+  const d = document.body.appendChild(el('dialog', { className: 'org-report org-problems' },
+    el('p', {}, el('b', { textContent: 'Check for problems ' }), count, stale),
+    el('div', { className: 'org-table' }, el('table', {}, el('thead', {}, el('tr', {}, ...['Object', 'Problem', ''].map(t => el('th', { textContent: t })))), body)),
+    el('div', { className: 'row' }, fixAll, el('button', { textContent: 'Check again', onclick: () => run() }), el('button', { className: 'primary', textContent: 'Close', onclick: () => d.close() }))));
+  d.onkeydown = e => { e.stopPropagation(); if (e.key === 'Escape') d.close(); };
+  // an edit, undo or redo (S.history), or another map; not the cache rebuilds of a model that has loaded
+  const offs = [on('doc', () => { if (!busy && S.history) stale.hidden = false; }), on('file', f => { if (f.op === 'load') stale.hidden = false; })];
+  d.onclose = () => { offs.forEach(f => f()); d.remove(); chk = null; };
+  chk = { run };
+  draw();
+  d.show();
 }
 
 function weldPlanes() {
@@ -155,7 +227,9 @@ function weldPlanes() {
 }
 
 export function mount() {
+  document.head.append(el('style', { textContent: CSS }));
   register('map.checkProblems', { title: 'Map: check for problems', keys: ['alt+p'], run: checkProblems });
+  register('map.checkAllKeys', { title: 'Map: check every keyvalue against the FGD again (forget the ignored keys)', run: () => { setCfg('checkIgnoreKeys', []); chk?.run(); } });
   register('map.weldPlanes', { title: 'Map: weld planes (brush sides on almost the same plane, black faces in game)', run: weldPlanes });
   register('map.entityReport', { title: 'Map: entity report', run: report });
   register('map.goto', { title: 'Map: go to coordinates or id...', keys: ['ctrl+shift+g'], run: goto });

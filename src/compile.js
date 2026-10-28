@@ -1,12 +1,13 @@
 // Side panel: compile steps, TF2 path, log, leak line, content check.
 import * as V from '../vmf.js';
 import { on } from './bus.js';
-import { S, doc, objects, nextId, save, setLin } from './state.js';
+import { S, doc, cache, objects, nextId, save, setLin, setSelection, setCursor, inHiddenBlock } from './state.js';
 import { register } from './commands.js';
 import { cfg, saveCfg, setCfg, MODES } from './settings.js';
 import { notice } from './dialog.js';
 import { el } from './dom.js';
 import { show } from './layout.js';
+import { focus, setFlyView } from './view3d.js';
 
 const api = window.api;
 
@@ -108,10 +109,38 @@ async function compile() {
   if (hidden) append(`note: ${hidden} hidden object(s) are not compiled (Unhide all: U)\n`);
   let r, v = vars; // r: { code, leaked }; main writes the Done/FAILED line
   try { v = await cordoned(vars); r = await api.run(await stockTools(await resolve(cfg.steps, v, append), api.exists, append)); } catch (e) { append(`\n${e.message}\n`); } finally { setRunning(false); }
-  if (r?.leaked) {
-    const n = V.nums(await api.read(v.mapbase + '.lin'));
-    if (n.length >= 6) setLin(Array.from({ length: (n.length / 3) | 0 }, (_, i) => n.slice(i * 3, i * 3 + 3)));
-  }
+  if (r?.leaked) await loadLeak(v.mapbase + '.lin');
+}
+
+// Hammer's Load pointfile: the leak line vbsp wrote to file (<map>.lin by default), shown by showLeak. False when it
+// has no line.
+async function loadLeak(file = S.file?.replace(/\.vmf$/i, '.lin')) {
+  const n = file ? V.nums(await api.read(file)) : [];
+  if (n.length < 6) return false;
+  showLeak(Array.from({ length: (n.length / 3) | 0 }, (_, i) => n.slice(i * 3, i * 3 + 3)));
+  return true;
+}
+
+// vbsp writes the .lin from the leak's exit, beside the void, to the origin of the entity that leaked (its last point).
+// ents: [[node, origin]]. The entity nearest either end is the leaking one (whichever way round the file runs); exit is
+// the other end and next the point after it, along the line.
+export function leakEnds(pts, ents) {
+  const near = p => ents.reduce((b, [n, o]) => { const d = Math.hypot(o[0] - p[0], o[1] - p[1], o[2] - p[2]); return d < b.d ? { n, d } : b; }, { n: null, d: Infinity });
+  const a = near(pts[0]), b = near(pts.at(-1)), last = b.d <= a.d;
+  return { ent: (last ? b : a).n, exit: last ? pts[0] : pts.at(-1), next: last ? pts[1] : pts.at(-2) };
+}
+
+// The leak line: the views framed on it, the 3D camera a little outside its exit end looking in along it, and the
+// leaking entity selected.
+function showLeak(pts) {
+  setLin(pts);
+  const ents = [...cache.values()].filter(c => c.point && !inHiddenBlock(c.node)).map(c => [c.node, V.nums(V.get(c.node, 'origin'))]).filter(([, o]) => o.length === 3);
+  const { ent, exit, next } = leakEnds(pts, ents), d = next.map((x, k) => x - exit[k]), l = Math.hypot(...d) || 1;
+  focus(V.bounds([{ pts }]));
+  setFlyView({ pos: exit.map((x, k) => x - (d[k] / l) * 64), yaw: Math.atan2(d[1], d[0]), pitch: Math.atan2(d[2], Math.hypot(d[0], d[1])) });
+  if (ent) setSelection([ent]);
+  const name = ent && [V.get(ent, 'classname'), V.get(ent, 'targetname')].filter(Boolean).join(' ');
+  setCursor(`Leak: ${name ? `${name} leaked (selected)` : 'see the red line'}; the 3D view looks in from where it reaches the void`);
 }
 
 // Cordons on (cordon.js): the steps compile <map folder>\cordon_compile\<mapname>.vmf, the map cut to the active boxes
@@ -192,4 +221,5 @@ export function mount(host) {
   register('addStep', { title: 'Add compile step', run: () => { cfg.steps.push({ on: true, name: 'Step', cmd: '' }); stepsPanel(); saveCfg(); } });
   register('compile.checkContent', { title: 'Compile: check content (list missing materials, models, sounds)', run: checkContent });
   register('compile.logFolder', { title: 'Compile: open log folder', run: logFolder });
+  register('compile.leak', { title: 'Compile: go to the leak (load the .lin pointfile, select the leaking entity)', run: async () => (await loadLeak()) || notice(S.file ? 'No leak line next to the map: the last compile did not leak (a cordoned compile writes it in cordon_compile).' : 'Save and compile the map first.') });
 }

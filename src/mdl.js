@@ -1,6 +1,7 @@
 // Source studio models (.mdl v44-49 + .vvd + .dx90.vtx, as TF2 ships them). Pure, node-testable.
-// load(path, read) -> { meshes: [{ positions, normals, uvs, indices, materialIndex }], materials, skins, bbox } or null.
-// The model is posed as the game draws it at rest (frame 0 of sequence 0), LOD 0, body group 0 of every body part.
+// load(path, read, body) -> { meshes: [{ positions, normals, uvs, indices, materialIndex }], materials, skins, bbox,
+// sequences, parts, attachments } or null. The model is posed as the game draws it at rest (frame 0 of sequence 0),
+// LOD 0, the body group combination body (0: the first model of every body part).
 
 const view = b => new DataView(b.buffer, b.byteOffset, b.byteLength);
 const cstr = (b, o) => { let e = o; while (e < b.length && b[e]) e++; return new TextDecoder().decode(b.subarray(o, e)); };
@@ -10,11 +11,12 @@ const slash = s => s.replace(/\\/g, '/').replace(/^\/+/, '').toLowerCase();
 export function parseMdl(b) {
   const d = view(b), i = o => d.getInt32(o, true);
   if (cstr(b, 0).slice(0, 4) !== 'IDST') throw new Error('not a studio model');
-  const version = i(4), textures = [], cdmaterials = [], skins = [], bodyparts = [];
+  const version = i(4), textures = [], cdmaterials = [], skins = [], bodyparts = [], parts = [];
   for (let k = 0, o = i(208); k < i(204); k++, o += 64) textures.push(slash(cstr(b, o + i(o))));
   for (let k = 0; k < i(212); k++) cdmaterials.push(slash(cstr(b, i(i(216) + k * 4))));
   for (let f = 0, o = i(228); f < i(224); f++) for (let r = 0; r < i(220); r++, o += 2) (skins[f] ??= []).push(d.getInt16(o, true));
-  // mstudiobodyparts_t (16 bytes) > mstudiomodel_t (148) > mstudiomesh_t (116); offsets are relative to each struct.
+  // mstudiobodyparts_t (16 bytes: name, nummodels, base, modelindex) > mstudiomodel_t (148) > mstudiomesh_t (116);
+  // offsets are relative to each struct.
   for (let p = 0, bo = i(236); p < i(232); p++, bo += 16) {
     const models = [];
     for (let m = 0, mo = bo + i(bo + 12); m < i(bo + 4); m++, mo += 148) {
@@ -23,14 +25,24 @@ export function parseMdl(b) {
       models.push({ name: cstr(b, mo).slice(0, 64), start: i(mo + 84) / 48, meshes }); // vertexindex is in bytes (48 per vertex)
     }
     bodyparts.push(models);
+    parts.push({ name: cstr(b, bo + i(bo)), base: i(bo + 8) || 1, models: models.map(m => m.name) });
   }
+  // Names of the local sequences (mstudioseqdesc_t, 212 bytes, label at 4) and attachments (mstudioattachment_t, 92).
+  // ponytail: sequences of $includemodel files (player animations) are not read; props keep theirs local.
+  const sequences = Array.from({ length: i(188) }, (_, k) => { const o = i(192) + k * 212; return cstr(b, o + i(o + 4)); });
+  const attachments = Array.from({ length: i(240) }, (_, k) => { const o = i(244) + k * 92; return cstr(b, o + i(o)); });
   const f = o => d.getFloat32(o, true), fs = (o, n) => Array.from({ length: n }, (_, k) => f(o + k * 4));
   const bones = Array.from({ length: i(156) }, (_, k) => { // mstudiobone_t, 216 bytes
     const o = i(160) + k * 216;
     return { parent: i(o + 4), pos: fs(o + 32, 3), quat: fs(o + 44, 4), rot: fs(o + 60, 3), posscale: fs(o + 72, 3), rotscale: fs(o + 84, 3), poseToBone: fs(o + 96, 12) };
   });
-  return { version, textures, cdmaterials, skins, bodyparts, bones, skin: skin(bones, frame0(b, d, i, bones)) };
+  return { version, textures, cdmaterials, skins, bodyparts, parts, sequences, attachments, bones, skin: skin(bones, frame0(b, d, i, bones)) };
 }
+
+// Model index of body part p ({ base, models }) in the body group combination body (Source's GetBodygroup), and body
+// with that part switched to model j (SetBodygroup).
+export const bodyIndex = (body, p) => (p.models.length ? Math.floor(Math.max(0, body) / p.base) % p.models.length : 0);
+export const setBody = (body, p, j) => Math.max(0, body) + (j - bodyIndex(body, p)) * p.base;
 
 // ---------- frame 0 of sequence 0 ----------
 // Most animated models store their mesh turned 90 degrees from how the game draws them: the root bone of the first
@@ -142,12 +154,12 @@ export function parseVtx(b) {
 // Material name candidates per texture: each cdmaterials folder + the texture name, in search order.
 export const candidates = mdl => mdl.textures.map(t => (mdl.cdmaterials.length ? mdl.cdmaterials : ['']).map(cd => slash(cd + (cd && !cd.endsWith('/') ? '/' : '') + t)));
 
-// Meshes of body group 0 of each body part, triangles counter-clockwise seen from outside (Source winds them clockwise).
-// materialIndex is the skin reference: skins[skin][materialIndex] -> texture.
-export function build(mdl, vvd, vtx) {
+// Meshes of the body group combination body (bodyIndex of each body part), triangles counter-clockwise seen from outside
+// (Source winds them clockwise). materialIndex is the skin reference: skins[skin][materialIndex] -> texture.
+export function build(mdl, vvd, vtx, body = 0) {
   const meshes = [], mn = [Infinity, Infinity, Infinity], mx = [-Infinity, -Infinity, -Infinity];
   mdl.bodyparts.forEach((models, p) => {
-    const m = models[0], tris = vtx[p]?.[0];
+    const j = bodyIndex(body, mdl.parts[p]), m = models[j], tris = vtx[p]?.[j];
     m?.meshes.forEach((s, k) => {
       const first = m.start + s.vertexoffset, n = s.numvertices, idx = tris?.[k] ?? [];
       if (!idx.length || idx.length % 3 || idx.some(x => x >= n) || (first + n) * 3 > vvd.positions.length) return;
@@ -156,7 +168,8 @@ export function build(mdl, vvd, vtx) {
       meshes.push({ positions, normals, uvs: vvd.uvs.slice(first * 2, (first + n) * 2), indices: Uint32Array.from(idx, (_, k) => idx[k + [0, 1, -1][k % 3]]), materialIndex: s.material });
     });
   });
-  return { meshes, materials: candidates(mdl), skins: mdl.skins.length ? mdl.skins : [mdl.textures.map((_, k) => k)], bbox: meshes.length ? [mn, mx] : null };
+  return { meshes, materials: candidates(mdl), skins: mdl.skins.length ? mdl.skins : [mdl.textures.map((_, k) => k)], bbox: meshes.length ? [mn, mx] : null,
+    sequences: mdl.sequences, parts: mdl.parts, attachments: mdl.attachments };
 }
 
 // Vertices first..first+n blended by their bone weights through the skin matrices (unweighted ones stay as stored).
@@ -180,9 +193,9 @@ function posed(vvd, sk, first, n) {
 }
 
 // read(relative path like 'models/x.vvd') -> Uint8Array | null. null when a file is missing or broken.
-export async function load(path, read) {
+export async function load(path, read, body = 0) {
   const base = slash(path).replace(/\.mdl$/, '');
   const [m, v, t] = await Promise.all(['.mdl', '.vvd', '.dx90.vtx'].map(e => read(base + e)));
   if (!m || !v || !t) return null;
-  return build(parseMdl(m), parseVvd(v), parseVtx(t));
+  return build(parseMdl(m), parseVvd(v), parseVtx(t), body);
 }

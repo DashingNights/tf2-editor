@@ -60,6 +60,16 @@ F5 walks the map inside the editor as a TF2 class, with TF2 movement. Shift+F5 s
 
 Import Figma layout (SVG) builds a blocked-out map from a top-down layout drawn in Figma and exported as SVG: floors, walls, stairs, roofs, spawn rooms, and the KOTH point. Layer names carry the heights and roles; the rules are in [ROADMAP.md](ROADMAP.md#figma-layout-import). Update from Figma (SVG) merges a newer export into a map you have edited since, and you review each change before it is applied.
 
+## More tools
+
+Most of Hammer++'s tools are in the Tools panels and the command palette (Ctrl+K):
+
+- Decals and overlays: Shift+D or Shift+O, then click a face. They use the material set under New objects in Details.
+- Polygon tool, Merge, 3-point clipping (C while clipping), a movable pivot (Ctrl+P), and grid sizes down to 0.125.
+- Sprinkle (scatter props over surfaces), physics drop, drop to ceiling, and Propper, which turns brushes into a static prop.
+- View options: the 2D and 3D skybox, fog, lit mode with light falloff and shadows, a lightmap density view, ropes, particle placeholders, and portal files after a compile. The 2D views can show model wireframes, the 3D camera, and a background image.
+- Alt+P checks the map for Hammer's problems and fixes the simple ones. Crashes leave an autosave that the editor offers at the next start, and models and materials reload when they change on disk.
+
 ## Settings
 
 Settings (Ctrl+,) holds the TF2 folder, autosave, snapping, the 3D view, the compile steps, and a Keys page where any shortcut can be changed. They are stored in `%APPDATA%\tf2-editor\settings.json`. Delete that file to go back to the defaults.

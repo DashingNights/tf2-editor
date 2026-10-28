@@ -1,7 +1,8 @@
 // Cordons (Hammer++): root block cordons { "active" "0|1" cordon { "name", "active", box { "mins" "(x y z)" "maxs" } } }.
-// The Cordon tool draws, moves and resizes the first cordon's box in the 2D views. While cordons are on, everything
-// outside the active boxes is dimmed (2D overlay, 3D builder) and the compile exports only the objects that touch a
-// box, sealed by a shell of tools/toolsskybox brushes (cordonRoot, used by compile.js).
+// One cordon is current (Cordons panel, cordon.next, or a click on its box with the Cordon tool): the tool draws, moves
+// and resizes its box in the 2D views, and From selection and Select touching / inside use it. Each cordon has its own
+// on/off. While cordons are on, everything outside the active boxes is dimmed (2D overlay, 3D builder) and the compile
+// exports only the objects that touch a box, sealed by a shell of tools/toolsskybox brushes (cordonRoot, compile.js).
 import * as THREE from 'three';
 import * as V from '../vmf.js';
 import { on } from './bus.js';
@@ -10,6 +11,8 @@ import { register } from './commands.js';
 import { cfg } from './settings.js';
 import { registerTool, registerOverlay, invalidate as redraw2d, s2 } from './view2d.js';
 import { setDimmer, refreshEntry, addHelper, removeHelper, invalidate as redraw3d } from './view3d.js';
+import { registerPanel, pane } from './layout.js';
+import { form } from './report.js';
 import { $, el } from './dom.js';
 
 // ---------- pure ----------
@@ -59,27 +62,71 @@ export function cordonRoot(root, boxes, nextId, t = 16) {
   })) };
 }
 
-// ---------- editing the first cordon ----------
-const first = () => cordons(doc.root).list[0];
-export const editBox = () => first()?.box ?? null;
+// ---------- editing: the current cordon ----------
+let cur = 0; // the current cordon's index (current() clamps it to the list)
+const list = () => cordons(doc.root).list;
+export const current = () => Math.min(cur, list().length - 1);
+export const editBox = () => list()[current()]?.box ?? null;
+let ui = () => {}; // redraws the views and the panel (mount sets it)
+export function pick(i) { cur = Math.max(0, i); ui(); }
 
-// One undo step: creates the cordons block and a cordon when missing, then sets the first cordon's box (when given)
-// and the cordons' on/off state (when given).
-function update(box, active) {
+// One undo step: fn(block, its cordon nodes) changes the cordons block, made first (off) when missing.
+function withBlock(fn) {
   const r = doc.root, old = V.kids(r, 'cordons')[0];
   edit(old ? [old] : [], [r], () => {
     let b = old;
     if (!b) r.children.push((b = { name: 'cordons', kv: [['active', '0']], children: [] }));
+    fn(b, V.kids(b, 'cordon'));
+  });
+}
+const boxNode = box => ({ name: 'box', kv: [['mins', vecText(box[0])], ['maxs', vecText(box[1])]], children: [] });
+
+// Sets the current cordon's box when given (a cordon is made when there is none) and the cordons' on/off state when
+// given.
+export function update(box, active) {
+  withBlock((b, cs) => {
     if (box) {
-      let c = V.kids(b, 'cordon')[0];
+      let c = cs[Math.min(cur, cs.length - 1)];
       if (!c) b.children.push((c = { name: 'cordon', kv: [['name', 'cordon'], ['active', '1']], children: [] }));
-      let x = V.kids(c, 'box')[0];
-      if (!x) c.children.push((x = { name: 'box', kv: [], children: [] }));
-      V.set(x, 'mins', vecText(box[0]));
-      V.set(x, 'maxs', vecText(box[1]));
+      const x = V.kids(c, 'box')[0];
+      if (x) { V.set(x, 'mins', vecText(box[0])); V.set(x, 'maxs', vecText(box[1])); } else c.children.push(boxNode(box));
     }
     if (active !== undefined) V.set(b, 'active', active ? '1' : '0');
   });
+}
+
+// A new cordon "cordon <n>", on and current: box, else the selection's bounds, else a 2048 cube round the origin.
+export function add(box = selBox()?.map(p => p.map(Math.round)) ?? [[-1024, -1024, -1024], [1024, 1024, 1024]]) {
+  const names = new Set(list().map(x => x.name));
+  let k = list().length + 1;
+  while (names.has(`cordon ${k}`)) k++;
+  withBlock(b => b.children.push({ name: 'cordon', kv: [['name', `cordon ${k}`], ['active', '1']], children: [boxNode(box)] }));
+  pick(list().length - 1);
+  setCursor(`cordon ${k} added (current)`);
+}
+
+// Removes the current cordon; the one before it becomes current.
+export function remove() {
+  const i = current(), c = list()[i];
+  if (!c) return;
+  withBlock(b => { b.children = b.children.filter(x => x !== c.node); });
+  pick(i - 1);
+  setCursor(`cordon removed: ${c.name}`);
+}
+
+export const setOn = (i, onNow) => withBlock((b, cs) => cs[i] && V.set(cs[i], 'active', onNow ? '1' : '0'));
+export const setName = (i, name) => withBlock((b, cs) => cs[i] && V.set(cs[i], 'name', name));
+
+function next() {
+  const n = list().length;
+  if (!n) return;
+  pick((current() + 1) % n);
+  setCursor(`current cordon: ${list()[current()].name}`);
+}
+
+async function rename(i = current()) {
+  const c = list()[i], r = c && (await form('Rename the cordon', [{ key: 'name', label: 'Name', value: c.name }], 'Rename'));
+  if (r?.name.trim()) setName(i, r.name.trim());
 }
 
 function toggle() {
@@ -96,7 +143,7 @@ function fromSelection() {
   setCursor('cordon on: the selection bounds');
 }
 
-// Hammer's Select touching / Select inside, against the first cordon's box.
+// Hammer's Select touching / Select inside, against the current cordon's box.
 function selectBy(test) {
   const b = editBox();
   if (!b) return setCursor('No cordon box: draw one with the Cordon tool');
@@ -134,12 +181,18 @@ function dragTo(v, w) {
   d.box = [mn, mx];
 }
 
-const TOOL = {
+// A press on the current box's handle resizes it; inside a box (the smallest one under the pointer) picks that cordon
+// and moves it; elsewhere draws a new box for the current cordon.
+export const TOOL = {
   down(v, e, w) {
-    const b = editBox(), h = b && handleAt(v, b, e.offsetX, e.offsetY), [i, j] = v.ax;
+    const l = list(), b = editBox(), h = b && handleAt(v, b, e.offsetX, e.offsetY), [i, j] = v.ax;
+    const under = x => x && w[0] >= x[0][i] && w[0] <= x[1][i] && w[1] >= x[0][j] && w[1] <= x[1][j], area = x => (x[1][i] - x[0][i]) * (x[1][j] - x[0][j]);
+    const n = l.reduce((m, c, k) => (under(c.box) && (m < 0 || area(c.box) < area(l[m].box)) ? k : m), -1);
     if (h) drag = { mode: 'resize', h, box0: b, box: b };
-    else if (b && w[0] >= b[0][i] && w[0] <= b[1][i] && w[1] >= b[0][j] && w[1] <= b[1][j]) drag = { mode: 'move', a: w, box0: b, box: b };
-    else {
+    else if (n >= 0) {
+      if (n !== current()) { pick(n); setCursor(`current cordon: ${l[n].name}`); }
+      drag = { mode: 'move', a: w, box0: l[n].box, box: l[n].box };
+    } else {
       const a = w.map(sn), [lo, hi] = depth(v), d = 3 - i - j, mn = [0, 0, 0], mx = [0, 0, 0];
       mn[d] = lo; mx[d] = hi;
       drag = { mode: 'new', a, box0: [mn, mx], box: null };
@@ -174,11 +227,12 @@ const TOOL = {
 };
 
 // ---------- drawing ----------
-// 2D: every cordon box (dashed; yellow when it cuts the map), the area outside the active boxes darkened, and the
-// first box's handles while the tool is active.
+// 2D: every cordon box (dashed; yellow when it cuts the map, named when there are several), the area outside the
+// active boxes darkened, and the current box's handles while the tool is active.
 function overlay(ctx, v) {
-  const c = cordons(doc.root), boxes = c.list.map((x, i) => ({ box: i === 0 && drag?.box ? drag.box : x.box, cut: c.on && x.on })).filter(x => x.box);
-  if (drag?.box && !c.list.length) boxes.push({ box: drag.box, cut: false });
+  const c = cordons(doc.root), n = current();
+  const boxes = c.list.map((x, k) => ({ box: k === n && drag?.box ? drag.box : x.box, cut: c.on && x.on, name: x.name, cur: k === n })).filter(x => x.box);
+  if (drag?.box && !c.list.length) boxes.push({ box: drag.box, cut: false, cur: true });
   const [i, j] = v.ax, rect = ([a, b]) => { const L = s2(v, a[i], a[j]), H = s2(v, b[i], b[j]); return [L[0], H[1], H[0] - L[0], L[1] - H[1]]; };
   const cut = boxes.filter(x => x.cut);
   if (cut.length) {
@@ -191,8 +245,10 @@ function overlay(ctx, v) {
   ctx.setLineDash([6, 4]);
   for (const x of boxes) { ctx.strokeStyle = x.cut ? '#ffd040' : '#a08a40'; ctx.strokeRect(...rect(x.box)); }
   ctx.setLineDash([]);
-  if (S.tool !== 'cordon' || !boxes.length) return;
-  const [x, y, w, h] = rect(boxes[0].box);
+  if (c.list.length > 1) for (const x of boxes) { const [px, py] = rect(x.box); ctx.fillStyle = x.cur ? '#ffd040' : '#a08a40'; ctx.fillText(x.name, px + 3, py - 4); }
+  const b = boxes.find(x => x.cur);
+  if (S.tool !== 'cordon' || !b) return;
+  const [x, y, w, h] = rect(b.box);
   ctx.fillStyle = '#ffd040';
   for (const px of [x, x + w / 2, x + w]) for (const py of [y, y + h / 2, y + h]) if (px !== x + w / 2 || py !== y + h / 2) ctx.fillRect(px - 3, py - 3, 6, 6);
 }
@@ -203,9 +259,9 @@ let wiresShown = false;
 function wire() {
   wires.children.forEach(h => { h.geometry.dispose(); h.material.dispose(); });
   wires.clear();
-  const c = cordons(doc.root), show = c.on || S.tool === 'cordon';
-  c.list.forEach((x, i) => {
-    const b = i === 0 && drag?.box ? drag.box : x.box;
+  const c = cordons(doc.root), show = c.on || S.tool === 'cordon', n = current();
+  c.list.forEach((x, k) => {
+    const b = k === n && drag?.box ? drag.box : x.box;
     if (b) wires.add(new THREE.Box3Helper(new THREE.Box3(new THREE.Vector3(...b[0]), new THREE.Vector3(...b[1])), c.on && x.on ? 0xffd040 : 0xa08a40));
   });
   if (show !== wiresShown) (wiresShown = show) ? addHelper(wires) : removeHelper(wires);
@@ -230,18 +286,47 @@ function syncButton(b) {
   b.textContent = `Cordon ${onNow ? 'on' : 'off'}`;
 }
 
+// ---------- Cordons panel ----------
+// The cordons with their on/off boxes; a click on a name makes it current (marked), a double-click renames it.
+const CSS = '.cd-row > span { cursor: pointer; } .cd-row.cur > span { color: var(--accent); font-weight: 600; }';
+let rows = null, master = null;
+function panel() {
+  if (!rows) return;
+  const c = cordons(doc.root), n = current();
+  master.checked = c.on;
+  rows.replaceChildren(...c.list.map((x, k) => el('div', { className: `row pf-row cd-row${k === n ? ' cur' : ''}`, title: x.box ? `${vecText(x.box[0])} to ${vecText(x.box[1])}` : 'No box yet' },
+    el('input', { type: 'checkbox', checked: x.on, title: 'This cordon cuts the map while cordons are on', onchange: e => setOn(k, e.target.checked) }),
+    el('span', { textContent: x.name || '(no name)', onclick: () => pick(k), ondblclick: () => rename(k) }))),
+  ...(c.list.length ? [] : [el('small', { textContent: 'No cordons: Add one, or draw a box with the Cordon tool.' })]));
+}
+
 export function mount() {
   registerTool('cordon', TOOL);
   registerOverlay(overlay);
   setDimmer(outside);
+  registerPanel({ id: 'cordons', title: 'Cordons', near: 'outliner' });
+  document.head.append(el('style', { textContent: CSS }));
+  master = el('input', { type: 'checkbox', onchange: () => { toggle(); panel(); } });
+  pane('cordons').append(el('div', { className: 'row pf-head' }, el('label', { title: 'Compile and show only what is inside the active cordons' }, master, ' On'),
+    ...[['Add', () => add()], ['Remove', remove], ['Rename', () => rename()], ['Next', next]].map(([textContent, onclick]) => el('button', { textContent, onclick }))),
+  (rows = el('div', { className: 'pf-list' })));
+  ui = () => { redraw2d(); wire(); panel(); };
   const onBtn = $('.cordon-toggle') ?? el('button'); // the toolbar's on/off button (index.html)
-  on('doc', () => { recut(); wire(); syncButton(onBtn); });
+  on('doc', () => { recut(); wire(); syncButton(onBtn); panel(); });
+  on('file', ({ op }) => { if (op === 'load') pick(0); });
   on('tool', () => { if (S.tool !== 'cordon') drag = null; wire(); redraw2d(); });
   syncButton(onBtn);
+  panel();
 
+  const some = () => !!doc.root && list().length > 0;
   register('tool.cordon', { title: 'Tool: cordon (drag a box in a 2D view)', run: () => setTool('cordon') , on: () => S.tool === 'cordon' });
   register('cordon.toggle', { title: 'Cordon: on/off (compile and show only what is inside)', run: toggle, on: () => !!doc.root && cordons(doc.root).on });
   register('cordon.fromSelection', { title: 'Cordon: from selection bounds', when: () => !!selBox(), run: fromSelection });
+  register('cordon.add', { title: 'Cordon: add a cordon (the selection bounds, else 2048 round the origin)', run: () => add() });
+  register('cordon.remove', { title: 'Cordon: remove the current cordon', when: some, run: remove });
+  register('cordon.next', { title: 'Cordon: next cordon (make it current)', when: () => some() && list().length > 1, run: next });
+  register('cordon.rename', { title: 'Cordon: rename the current cordon...', when: some, run: () => rename() });
+  register('cordon.active', { title: 'Cordon: current cordon on/off', when: some, on: () => some() && list()[current()].on, run: () => setOn(current(), !list()[current()].on) });
   register('select.touching', { title: 'Select touching the cordon box', run: () => selectBy(touches) });
   register('select.inside', { title: 'Select inside the cordon box', run: () => selectBy(within) });
 }

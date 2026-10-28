@@ -46,6 +46,18 @@ export const ICONS = {
   'poly.chamfer': 'octagon', 'poly.snap': 'magnet', 'poly.remove': 'trash-2', 'poly.slice': 'slice', 'poly.connect': 'cable',
   'poly.loop': 'infinity', 'poly.ring': 'circle-dashed', 'poly.extrude': 'move-up', 'poly.inset': 'frame', 'poly.bevel': 'triangle',
   'poly.delete': 'trash', 'poly.detach': 'split',
+  'view.models2d': 'box', 'view.icons2d': 'lamp', 'view.camera2d': 'crosshair', 'view.backgroundImage': 'image-plus', 'view.backgroundClear': 'square-x',
+  'tool.polygon': 'pencil', 'brush.merge': 'combine', 'clip.threePoint': 'triangle', 'pivot.place': 'crosshair', 'pivot.clear': 'rotate-ccw',
+  'path.autoLink': 'waypoints', 'view.renderLightmap': 'grid-2x2', 'view.proxies': 'play', 'view.renderFx': 'blend', 'view.lightShadows': 'lamp',
+  'tool.sprinkle': 'shapes', 'drop.ceiling': 'arrow-up-from-line', 'drop.align': 'axis-3d', 'physics.drop': 'blocks', 'physics.randomYaw': 'refresh-ccw',
+  'sprinkle.presetFromSelection': 'list-plus', 'sprinkle.edit': 'sliders-horizontal', 'propper.compile': 'package-plus',
+  'disp.subdivide': 'layout-grid', 'disp.noise': 'mountain', 'disp.power': 'grid-2x2', 'disp.invertAlpha': 'blend', 'disp.noPhysics': 'package-open',
+  'disp.noHull': 'person-standing', 'disp.noRay': 'scan-line', 'disp.tagWalkable': 'waypoints', 'disp.tagBuildable': 'hammer',
+  'cordon.add': 'square-plus', 'cordon.remove': 'trash-2', 'cordon.next': 'arrow-right-left', 'cordon.rename': 'tag', 'cordon.active': 'check-check',
+  'view.sky2d': 'sun', 'view.sky3d': 'globe', 'view.fog': 'scan-eye', 'view.fogFromSelection': 'mouse-pointer-click', 'view.ropes': 'cable',
+  'view.entityPreviews': 'eye', 'view.particles': 'radar', 'view.propEffects': 'palette', 'view.propGlow': 'focus', 'view.spriteSizes': 'image',
+  'instances.fromSelection': 'copy-plus', 'instances.editInPlace': 'pencil', 'instances.saveInPlace': 'save', 'map.checkProblems': 'scan-search',
+  'map.loadPortals': 'layers', 'map.clearPortals': 'eraser', 'assets.reload': 'refresh-cw', 'tool.decal': 'paintbrush', 'tool.overlay': 'image',
 };
 // A command button with its icon before its name (the tooltip comes from the command, sync()).
 export function iconize(b) {
@@ -64,7 +76,7 @@ export const ROLLOUTS = [
   { id: 'undo', title: 'Undo', rows: [['', ['Undo', 'undo'], ['Redo', 'redo']]] },
   // id 'main': the panel of the former Main section (a saved layout keeps where it is)
   { id: 'main', title: 'Tools', rows: [
-    ['Tool', ['Select', 'select'], ['Block', 'block'], ['Entity', 'entity'], ['Clip', 'tool.clip'], ['Stairs / ramp', 'tool.stairs'], ['Chamfer', 'tool.chamfer'], ['Roof', 'tool.roof'], ['Cordon', 'tool.cordon']],
+    ['Tool', ['Select', 'select'], ['Block', 'block'], ['Entity', 'entity'], ['Clip', 'tool.clip'], ['Polygon', 'tool.polygon'], ['Stairs / ramp', 'tool.stairs'], ['Chamfer', 'tool.chamfer'], ['Roof', 'tool.roof'], ['Cordon', 'tool.cordon'], ['Sprinkle', 'tool.sprinkle'], ['Decal', 'tool.decal'], ['Overlay', 'tool.overlay']],
   ] },
   { id: 'level', title: 'Edit mode', rows: [['Edit', ['Vertex', 'mode.vertex'], ['Edge', 'mode.edge'], ['Face', 'mode.face'], ['Object', 'mode.object']]] },
   { id: 'grid', title: 'Grid', rows: [['Grid', ['Grid smaller', 'gridDown'], ['Grid larger', 'gridUp']]] },
@@ -80,15 +92,24 @@ export const ROLLOUTS = [
     ['', ['Group', 'group'], ['Ungroup', 'ungroup'], ['Ignore groups', 'select.ignoreGroups'], ['Visgroup from selection', 'visgroup.create']],
   ] },
   { id: 'brush', title: 'Brushes', rows: [
-    ['', ['Carve', 'brush.carve'], ['Hollow...', 'brush.hollow'], ['Transform...', 'brush.transform']],
-    ['', ['Flip H', 'brush.flipH'], ['Flip V', 'brush.flipV'], ['Drop to surface', 'drop']],
+    ['', ['Carve', 'brush.carve'], ['Hollow...', 'brush.hollow'], ['Transform...', 'brush.transform'], ['Merge', 'brush.merge']],
+    ['', ['Flip H', 'brush.flipH'], ['Flip V', 'brush.flipV'], ['Drop to surface', 'drop'], ['Drop to ceiling', 'drop.ceiling'], ['Drop and align', 'drop.align']],
     ['Snap', ['Snap each to grid', 'brush.snapToGrid'], ['Snap as one', 'brush.snapSelection']],
     ['Align', ['Align left', 'align.left'], ['Align right', 'align.right'], ['Align top', 'align.top'], ['Align bottom', 'align.bottom'], ['Align center', 'align.center']],
     ['Tie', ['To func_detail', 'tie.detail'], ['To world', 'tie.world'], ['Nodraw hidden faces', 'blockout.nodraw']],
-    ['Clip', ['Clip stairs', 'stairs.clip']],
+    ['Clip', ['Clip stairs', 'stairs.clip'], ['3-point clip', 'clip.threePoint']],
+    ['Pivot', ['Place pivot', 'pivot.place'], ['Reset pivot', 'pivot.clear']],
+    ['Physics', ['Physics drop', 'physics.drop'], ['Random yaw', 'physics.randomYaw']],
+    ['Sprinkle', ['Preset from selection', 'sprinkle.presetFromSelection'], ['Edit preset...', 'sprinkle.edit']],
+    ['Model', ['Propper...', 'propper.compile']],
+  ] },
+  { id: 'disp', title: 'Displacement', rows: [
+    ['', ['Subdivide', 'disp.subdivide'], ['Noise', 'disp.noise'], ['Power', 'disp.power'], ['Invert alpha', 'disp.invertAlpha']],
+    ['Flags', ['No physics', 'disp.noPhysics'], ['No hull', 'disp.noHull'], ['No ray', 'disp.noRay']],
+    ['Tags', ['Walkable', 'disp.tagWalkable'], ['Buildable', 'disp.tagBuildable']],
   ] },
   { id: 'edit', title: 'Clipboard', rows: [
-    ['', ['Copy', 'edit.copy'], ['Cut', 'edit.cut'], ['Paste', 'edit.paste'], ['Paste at cursor', 'edit.pasteAtCursor'], ['Paste special...', 'edit.pasteSpecial'], ['Repeat duplicate', 'blockout.repeat']],
+    ['', ['Copy', 'edit.copy'], ['Cut', 'edit.cut'], ['Paste', 'edit.paste'], ['Paste at cursor', 'edit.pasteAtCursor'], ['Paste special...', 'edit.pasteSpecial'], ['Repeat duplicate', 'blockout.repeat'], ['Link path clones', 'path.autoLink']],
   ] },
   { id: 'mirror', title: 'Mirror', rows: [
     ['', ['Live mirror', 'mirror.toggle'], ['Decor entities', 'mirror.ents']],
@@ -98,17 +119,22 @@ export const ROLLOUTS = [
   { id: 'cordon', title: 'Cordon', rows: [
     ['', ['Draw', 'tool.cordon'], ['Cordon on', 'cordon.toggle'], ['From selection', 'cordon.fromSelection']],
     ['Select', ['Select inside', 'select.inside'], ['Select touching', 'select.touching']],
+    ['Cordons', ['Add', 'cordon.add'], ['Remove', 'cordon.remove'], ['Next', 'cordon.next'], ['Rename', 'cordon.rename'], ['This one on', 'cordon.active']],
   ] },
   { id: 'view', title: 'View', rows: [
-    ['Render', ['Textured', 'renderTextured'], ['Flat', 'renderFlat'], ['Wireframe', 'renderWireframe'], ['Lit', 'view.renderLit']],
-    ['Show', ['Entity lines', 'view.entityLines'], ['Slope tint', 'view.slopeTint'], ['Blockout mode', 'blockout.toggle']],
+    ['Render', ['Textured', 'renderTextured'], ['Flat', 'renderFlat'], ['Wireframe', 'renderWireframe'], ['Lit', 'view.renderLit'], ['Lightmap', 'view.renderLightmap']],
+    ['Show', ['Entity lines', 'view.entityLines'], ['Slope tint', 'view.slopeTint'], ['Blockout mode', 'blockout.toggle'], ['Animate materials', 'view.proxies'], ['Render effects', 'view.renderFx'], ['Light shadows', 'view.lightShadows']],
+    ['Sky', ['2D sky', 'view.sky2d'], ['3D sky', 'view.sky3d'], ['Fog', 'view.fog'], ['Fog from selection', 'view.fogFromSelection']],
+    ['Entities', ['Ropes', 'view.ropes'], ['Previews', 'view.entityPreviews'], ['Particles', 'view.particles'], ['Prop effects', 'view.propEffects'], ['Prop glow', 'view.propGlow'], ['Sprite sizes', 'view.spriteSizes']],
+    ['2D', ['Models', 'view.models2d'], ['Icons', 'view.icons2d'], ['Camera', 'view.camera2d'], ['Background...', 'view.backgroundImage'], ['Clear background', 'view.backgroundClear']],
     ['Aids', ['Player box', 'aids.player'], ['Measure', 'aids.measure'], ['Jump bands', 'aids.jump'], ['Sentry range', 'aids.sentry'], ['Clear measures', 'aids.clearMeasures']],
     ['Layout', ['Focus', 'focus'], ['2D views', 'layout.toggle2d'], ['Maximize view', 'view.maximize'], ['Reset layout', 'layout.reset'], ['New custom panel', 'panel.custom.new']],
   ] },
   { id: 'map', title: 'Map', rows: [
     ['', ['Go to...', 'map.goto'], ['Entity report', 'map.entityReport'], ['Properties', 'map.properties']],
     ['', ['Replace material...', 'material.replace'], ['Import image...', 'import.image'], ['Save prefab...', 'prefab.save']],
-    ['Instances', ['Reload instances', 'instances.reload'], ['Open instance', 'instances.edit'], ['Collapse instances', 'instances.collapse']],
+    ['Instances', ['Reload instances', 'instances.reload'], ['Open instance', 'instances.edit'], ['Collapse instances', 'instances.collapse'], ['From selection', 'instances.fromSelection'], ['Edit in place', 'instances.editInPlace'], ['Save in place', 'instances.saveInPlace']],
+    ['Check', ['Check for problems', 'map.checkProblems'], ['Load portals', 'map.loadPortals'], ['Clear portals', 'map.clearPortals'], ['Reload assets', 'assets.reload']],
     ['Figma', ['Figma import...', 'figma.import'], ['Figma update...', 'figma.update'], ['Figma adopt...', 'figma.adopt']],
   ] },
 ];

@@ -10,7 +10,7 @@ const { on } = await import('../src/bus.js');
 
 test('every Tools button runs a command some module registers', () => {
   const src = ['app.js', ...readdirSync('src').filter(f => f.endsWith('.js')).map(f => 'src/' + f)].map(f => readFileSync(f, 'utf8')).join('\n');
-  const ids = new Set([...src.matchAll(/register\(\s*'([^']+)'/g), ...src.matchAll(/^\s*\['([A-Za-z0-9.]+)', ['`]/gm)].map(m => m[1]));
+  const ids = new Set([...src.matchAll(/register\(\s*'([^']+)'/g), ...src.matchAll(/^\s*\['([A-Za-z0-9.]+)', ['`\d]/gm)].map(m => m[1]));
   const used = ROLLOUTS.flatMap(r => r.rows.flatMap(([, ...bs]) => bs.map(b => b[1])));
   assert.ok(used.length > 60);
   assert.deepEqual(used.filter(id => !ids.has(id)), []);

@@ -80,7 +80,7 @@ export const SCHEMA = [
     { key: 'mouseSensitivity', label: 'Mouse sensitivity', type: 'number', min: 0.1, max: 5, step: 0.1, hint: 'Look and orbit speed.' },
     { key: 'farClip', label: 'Far clip', type: 'number', min: 1000, max: 200000, step: 1000, hint: 'Units.' },
     { key: 'playtestFov', label: 'Playtest field of view', type: 'number', min: 20, max: 90, step: 1, hint: "TF2's fov_desired: horizontal at 4:3, 20-90 (the game starts at 75, most players use 90)." },
-    { key: 'renderMode', label: 'Render mode', type: 'select', options: [['textured', 'Textured'], ['flat', 'Flat'], ['wireframe', 'Wireframe'], ['lit', 'Lit (lighting preview)']] },
+    { key: 'renderMode', label: 'Render mode', type: 'select', options: [['textured', 'Textured'], ['flat', 'Flat'], ['wireframe', 'Wireframe'], ['lit', 'Lit (lighting preview)'], ['lightmap', 'Lightmap density']] },
     { key: 'entityLines', label: 'Entity lines', type: 'bool', hint: 'Lines from entities to their targets, parents and output targets (View: entity lines).' },
     { key: 'showGrid3d', label: 'Show grid', type: 'bool', hint: 'Grid on the z = 0 plane.' },
     { key: 'gizmoSize', label: 'Gizmo size', type: 'number', min: 0.3, max: 3, step: 0.1 },

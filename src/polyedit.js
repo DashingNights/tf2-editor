@@ -32,7 +32,7 @@ const opt = () => ({ ...OPTS, ...cfg.poly });
 const setOpt = (k, v) => setCfg('poly', { ...cfg.poly, [k]: v });
 const lock = () => cfg.texLock !== false;
 let shift = false;
-const step = () => (cfg.snapGrid === false ? 1 : shift ? Math.max(1, S.grid / 4) : S.grid);
+const step = () => (cfg.snapGrid === false ? 1 : shift ? Math.min(S.grid, Math.max(1, S.grid / 4)) : S.grid);
 const rstep = () => (!cfg.snapRotation ? 0.5 : shift ? +cfg.rotationStepFine || 5 : +cfg.rotationStep || 15);
 const sn = (x, g = step()) => Math.round(x / g) * g + 0;
 const add = (a, b) => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];

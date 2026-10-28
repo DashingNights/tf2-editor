@@ -388,8 +388,8 @@ export function build(mesh, src, { nextId = () => '0', texLock = true } = {}) {
   };
 
   // unchanged faces (same corners, texture not moved) keep their side node, and so do unchanged seams between pieces
-  // (sides no face of the mesh uses); the rest get new sides (the first copy of a side keeps its id)
-  const meshSides = new Set(pf.map(fc => fc.side)), used = new Set(), ids = new Set(), plan = cells.map(c => c.fs.map(f => {
+  // (sides no face of the mesh uses); the rest get new sides (the first copy of a side keeps its id) in made
+  const meshSides = new Set(pf.map(fc => fc.side)), used = new Set(), ids = new Set(), made = new Set(), plan = cells.map(c => c.fs.map(f => {
     const P = planes[f.o.pi], n = f.o.flip ? mul(P.n, -1) : P.n, at = faceAt(f.o, f.pts), k = at ?? P.faces[0];
     const same = g => !used.has(g.side) && dot(g.n, n) > 1 - 1e-9 && V.samePoly(g.pts, f.pts);
     const old = (!tex[k] && !pf[k].fresh && was.find(g => g.side === pf[k].side && same(g))) || (at === null && was.find(g => !meshSides.has(g.side) && same(g)));
@@ -407,6 +407,7 @@ export function build(mesh, src, { nextId = () => '0', texLock = true } = {}) {
         s.children.push(c);
       }
       ids.add(id);
+      made.add(s);
       return s;
     });
     sides.sort((a, b) => (srcSides.indexOf(a) + 1 || 1e9) - (srcSides.indexOf(b) + 1 || 1e9));
@@ -414,8 +415,10 @@ export function build(mesh, src, { nextId = () => '0', texLock = true } = {}) {
     return { name: 'solid', kv: from ? from.kv.map(p => [...p]) : [['id', nextId()]], children: [...sides, ...(from ? rest : structuredClone(rest))] };
   });
   if (!solids.every(V.valid)) return { error: 'could not build valid brushes from this shape', mesh: out };
-  // the edit mesh, each face on the new side under its middle (else one on its plane)
+  // the edit mesh, each face on the new side under its middle (else one on its plane); new sides get Hammer++'s exact
+  // corners (the mesh's vertices where they are on them)
   const got = solids.flatMap(V.faces);
+  for (const g of got) if (made.has(g.side)) V.setCorners(g.side, g.pts.map(p => w.v.find(q => len(sub(p, q)) < EPS) ?? p));
   out.f = pf.map((fc, k) => {
     const P = planes[fc.pl], [u, wv] = basis(P.n), c = centre(polys[k]), c2 = [dot(c, u), dot(c, wv)];
     const on = got.filter(g => dot(g.n, P.n) > 1 - 1e-6 && Math.abs(dot(g.n, g.pts[0]) - P.d) < EPS);
@@ -594,8 +597,9 @@ export function removeVerts(m, verts) {
 
 // ---------- plane edits ----------
 // solid cut by half-spaces { q (3 points, normal outward), from: side } (inside: behind the plane). New faces copy
-// from's material and lightmap scale with world-aligned axes; sides left without a face go, reshaped faces lose
-// vertices_plus and displacements. Same ids, new sides from nextId(). null when nothing valid is left.
+// from's material and lightmap scale with world-aligned axes; sides left without a face go, reshaped faces lose their
+// displacements; new and reshaped faces get Hammer++'s vertices_plus with their corners. Same ids, new sides from
+// nextId(). null when nothing valid is left.
 export function cutBy(solid, cuts, nextId) {
   const s = structuredClone(solid), was = new Map(V.faces(solid).map(f => [V.get(f.side, 'id'), f.pts]));
   s.children.splice(s.children.findLastIndex(c => c.name === 'side') + 1, 0, ...cuts.map(c => {
@@ -608,7 +612,12 @@ export function cutBy(solid, cuts, nextId) {
 function tidy(s, was) {
   const fs = V.faces(s);
   s.children = s.children.filter(c => c.name !== 'side' || fs.some(f => f.side === c));
-  for (const f of fs) { const p = was.get(V.get(f.side, 'id')); if (p && !V.samePoly(f.pts, p)) f.side.children = f.side.children.filter(c => c.name !== 'vertices_plus' && c.name !== 'dispinfo'); }
+  for (const f of fs) {
+    const p = was.get(V.get(f.side, 'id'));
+    if (p && V.samePoly(f.pts, p)) continue;
+    f.side.children = f.side.children.filter(c => c.name !== 'dispinfo');
+    V.setCorners(f.side, f.pts);
+  }
   return V.valid(s) ? s : null;
 }
 // The solid without the given sides, closed by the planes of the others; null when they leave it open.

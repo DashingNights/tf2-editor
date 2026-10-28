@@ -1,13 +1,14 @@
 // Displacements in the editor (Hammer's face edit Displacement tab): the subdivided surface in 3D (a view3d builder;
 // the other faces of a displacement brush are not drawn, as in Hammer, and vbsp drops them), the displaced outline in
-// the 2D views, the Displacement panel (create, destroy, sew, select all, paint settings) and the paint tool.
+// the 2D views, the Displacement panel (create, destroy, sew, subdivide, noise, power, invert alpha, attributes, select
+// all, paint settings), the paint tool and the walkable / buildable tag tools with their tag view.
 // Blend materials ($basetexture2, WorldVertexTransition) draw a second layer over the first with the vertex alpha as
 // its opacity.
 import * as THREE from 'three';
 import * as V from '../vmf.js';
 import * as D from './dispgeo.js';
 import * as M from './materials.js';
-import { registerBuilder, registerTool, refreshEntry, addHelper, removeHelper, invalidate, onHover } from './view3d.js';
+import { registerBuilder, registerTool, refreshEntry, addHelper, removeHelper, invalidate, onHover, rayAt } from './view3d.js';
 import * as view2d from './view2d.js';
 import { registerPanel, pane } from './layout.js';
 import { S, cache, sel, faceSel, edit, setSelection, setFaceSelection, setTool, setCursor } from './state.js';
@@ -15,6 +16,8 @@ import { register } from './commands.js';
 import { cfg, setCfg } from './settings.js';
 import { on } from './bus.js';
 import { el } from './dom.js';
+import { ask } from './dialog.js';
+import { form } from './report.js';
 import { mirrorPoint, twinOf } from './mirror.js';
 
 registerPanel({ id: 'displacement', title: 'Displacement', near: 'details' });
@@ -240,6 +243,71 @@ function selectAll() {
   setCursor(`${cs.length} displacement brush(es) selected`);
 }
 
+// ---------- subdivide, noise, power, invert alpha, attributes ----------
+const dispItems = () => picked().filter(([, f]) => isDisp(f.side));
+const none = what => setCursor(`${what}: select displacements first (their faces, or their brushes)`);
+// Runs fn(grid) on each picked displacement as one undo step and writes the grids it changed (fn returned true).
+// Returns how many, or null when none is picked (and says so).
+function eachGrid(what, fn) {
+  const items = dispItems();
+  if (!items.length) { none(what); return null; }
+  return change(items, (s, pts) => { const g = D.parse(s, pts); return g && fn(g) && (D.write(s, g), true); });
+}
+
+// The picked displacements smoothed together as one surface (dispgeo subdivide), one undo step.
+function subdivideSel() {
+  const xs = dispItems().map(([c, f]) => ({ c, f, g: D.parse(f.side, f.pts) })).filter(x => x.g);
+  if (!xs.length) return none('Subdivide');
+  const k = D.subdivide(xs.map(x => x.g));
+  if (k) edit([...new Set(xs.map(x => x.c.node))], [], () => xs.forEach(x => D.write(x.f.side, x.g)));
+  setCursor(k ? `Subdivided ${xs.length} displacement(s): ${k} vertices smoothed (run it again to smooth more)` : 'Subdivide: nothing to smooth');
+}
+
+let noiseMin = -8, noiseMax = 8; // the Noise dialog's last values
+async function noiseSel() {
+  if (!dispItems().length) return none('Noise');
+  const r = await form('Noise: every vertex moves along the face normal by a random distance from Min to Max.', [{ key: 'min', label: 'Min', value: String(noiseMin) }, { key: 'max', label: 'Max', value: String(noiseMax) }], 'Apply');
+  if (!r) return;
+  const a = +r.min, b = +r.max, seed = (Math.random() * 2 ** 32) >>> 0; // one seed: shared edges move alike
+  if (!Number.isFinite(a) || !Number.isFinite(b)) return setCursor('Noise: Min and Max must be numbers');
+  [noiseMin, noiseMax] = [Math.min(a, b), Math.max(a, b)];
+  const k = eachGrid('Noise', g => D.noise(g, noiseMin, noiseMax, seed));
+  setCursor(`Noise ${noiseMin} to ${noiseMax} on ${k} displacement(s)`);
+}
+
+// Power p (2-4) on the picked displacements, resampled; without p it asks.
+async function powerSel(p) {
+  if (!dispItems().length) return none('Power');
+  if (!(p >= 2 && p <= 4)) {
+    const i = await ask('Power of the selected displacements? Distances, offsets and alphas are resampled.', ['2 (5 x 5)', '3 (9 x 9)', '4 (17 x 17)', 'Cancel']);
+    if (i > 2) return;
+    p = i + 2;
+  }
+  const k = eachGrid('Power', g => D.setPower(g, p));
+  setCursor(`Power ${p}: ${k} displacement(s) resampled`);
+}
+
+function invertSel() {
+  const k = eachGrid('Invert alpha', D.invertAlpha);
+  if (k !== null) setCursor(`Inverted the alpha of ${k} displacement(s)`);
+}
+
+// Hammer's attributes: dispinfo flags bits (CCoreDispInfo SURF_*) [command, bit, name, button]; playmove.js honours no hull.
+const FLAGS = [
+  ['disp.noPhysics', 2, 'No physics collision', 'No physics'],
+  ['disp.noHull', 4, 'No hull collision', 'No hull'],
+  ['disp.noRay', 8, 'No ray collision', 'No ray'],
+];
+const flagsOf = side => +V.get(V.kids(side, 'dispinfo')[0], 'flags') || 0;
+const allHave = (items, bit) => items.length > 0 && items.every(([, f]) => flagsOf(f.side) & bit);
+// Sets bit on every picked displacement, or clears it when all have it; one undo step.
+function toggleFlag(bit, name) {
+  const items = dispItems(), on = !allHave(items, bit);
+  if (!items.length) return none(name);
+  change(items, s => V.set(V.kids(s, 'dispinfo')[0], 'flags', String((flagsOf(s) & ~bit) | (on ? bit : 0))));
+  setCursor(`${name} ${on ? 'on' : 'off'} for ${items.length} displacement(s)`);
+}
+
 // ---------- the paint tool ----------
 const Z = new THREE.Vector3(0, 0, 1), tv = new THREE.Vector3();
 const ring = new THREE.LineLoop(
@@ -324,6 +392,67 @@ const TOOL = {
   },
 };
 
+// ---------- tag tools (Hammer's Walkable / Buildable) and the tag view ----------
+// While the tag tool is on (tagKind 'walkable' or 'buildable') the tag view tints the triangles of every visible
+// displacement: not walkable (buildable) red, forced off blue, forced on green. A click flips the triangle under the
+// pointer (dispgeo toggleTag: the triangle_tags force bits), one undo step each.
+let tagKind = null;
+const TINT = { off: [1, 0.3, 0.25], 'forced off': [0.3, 0.5, 1], 'forced on': [0.3, 1, 0.45] };
+const tagMesh = new THREE.Mesh(new THREE.BufferGeometry(), new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -4 }));
+tagMesh.renderOrder = 2;
+function tagView() {
+  if (!tagKind && !tagMesh.parent) return;
+  const pos = [], col = [];
+  if (tagKind) for (const L of live.values()) {
+    if (!cache.get(L.node)?.visible) continue;
+    D.triangles(L.grid.n).forEach((t, i) => {
+      const c = TINT[D.tagState(L.grid.tags[i], tagKind)];
+      if (c) for (const v of t) { pos.push(...L.P[v]); col.push(...c); }
+    });
+  }
+  tagMesh.geometry.dispose();
+  tagMesh.geometry = new THREE.BufferGeometry();
+  tagMesh.geometry.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  tagMesh.geometry.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  if (tagKind && !tagMesh.parent) addHelper(tagMesh);
+  else if (!tagKind) removeHelper(tagMesh);
+  else invalidate();
+}
+
+const TAG_TOOL = {
+  activate() {
+    tagKind ??= 'walkable';
+    tagView();
+    setCursor(`Tag ${tagKind}: click a displacement triangle to flip it. Red: not ${tagKind}, blue: forced not ${tagKind}, green: forced ${tagKind}. Esc stops.`);
+  },
+  deactivate() { tagKind = null; tagView(); },
+  down(e, hit) {
+    const L = dispHit(hit);
+    if (!L) return false;
+    const r = rayAt(e.offsetX, e.offsetY), i = D.rayTri(L.grid, r.origin.toArray(), r.direction.toArray()), g = L.grid;
+    if (i < 0) return true;
+    D.toggleTag(g, i, tagKind);
+    edit([L.node], [], () => D.write(L.side, g));
+    const s = D.tagState(g.tags[i], tagKind);
+    setCursor(`Triangle ${i} is now ${s.endsWith('on') ? '' : 'not '}${tagKind}${s.startsWith('forced') ? ' (forced)' : ' (from its slope)'}`);
+    return true;
+  },
+  key(e) {
+    if (e.key !== 'Escape') return false;
+    setTool('select');
+    return true;
+  },
+};
+const tagOn = kind => S.tool === 'disp.tag' && tagKind === kind;
+// The tag tool for kind; again: back to Select.
+function tagTool(kind) {
+  if (tagOn(kind)) return setTool('select');
+  tagKind = kind;
+  if (S.tool !== 'disp.tag') return setTool('disp.tag');
+  TAG_TOOL.activate();
+  status();
+}
+
 // ---------- panel ----------
 const controls = new Map(); // cfg key -> its input, kept in step with 'cfg'
 // Numeric settings (DEF is a number) are stored as numbers, clamped to the input's min and max.
@@ -341,20 +470,28 @@ const number = (key, min, max, step) => field(key, el('input', { type: 'number',
 const row = (label, ...kids) => el('div', { className: 'dp-row' }, el('label', { textContent: label }), el('div', { className: 'dp-c' }, ...kids));
 const cmdBtn = (text, cmd) => { const b = el('button', { textContent: text }); b.dataset.cmd = cmd; return b; };
 
-let info, paintBtn;
+let info, paintBtn, flagBtns, tagBtns;
 function status() {
-  const items = picked(), d = items.filter(([, f]) => isDisp(f.side)).length;
-  info.textContent = items.length ? `${items.length} face(s) picked, ${d} displacement(s)` : 'Select faces (face mode, 2) to create; brushes or faces to sew or destroy.';
+  const items = picked(), ds = items.filter(([, f]) => isDisp(f.side));
+  info.textContent = items.length ? `${items.length} face(s) picked, ${ds.length} displacement(s)` : 'Select faces (face mode, 2) to create; brushes or faces to sew or destroy.';
   paintBtn.classList.toggle('on', S.tool === 'disp.paint');
+  FLAGS.forEach(([, bit], k) => flagBtns[k].classList.toggle('on', allHave(ds, bit)));
+  for (const k in tagBtns) tagBtns[k].classList.toggle('on', tagOn(k));
 }
 
 function panel() {
   info = el('small', { className: 'dp-info' });
   paintBtn = cmdBtn('Paint', 'disp.paint');
+  flagBtns = FLAGS.map(([id, , , text]) => cmdBtn(text, id));
+  tagBtns = { walkable: cmdBtn('Walkable', 'disp.tagWalkable'), buildable: cmdBtn('Buildable', 'disp.tagBuildable') };
+  const powerBtn = el('button', { textContent: 'Set', title: 'Set the selected displacements to this power (resampled)', onclick: () => powerSel(+opt('dispPower')) });
   pane('displacement').append(el('div', { className: 'dp' },
     info,
-    row('Power', choice('dispPower', [['2', '2 (5 x 5)'], ['3', '3 (9 x 9)'], ['4', '4 (17 x 17)']]), cmdBtn('Create', 'disp.create'), cmdBtn('Destroy', 'disp.destroy')),
+    row('Power', choice('dispPower', [['2', '2 (5 x 5)'], ['3', '3 (9 x 9)'], ['4', '4 (17 x 17)']]), powerBtn, cmdBtn('Create', 'disp.create'), cmdBtn('Destroy', 'disp.destroy')),
     row('', cmdBtn('Sew', 'disp.sew'), cmdBtn('Select all', 'disp.selectAll')),
+    row('Shape', cmdBtn('Subdivide', 'disp.subdivide'), cmdBtn('Noise', 'disp.noise'), cmdBtn('Invert alpha', 'disp.invertAlpha')),
+    row('Flags', ...flagBtns),
+    row('Tags', ...Object.values(tagBtns)),
     el('hr'),
     row('Tool', paintBtn),
     row('Paint', choice('dispTarget', [['geometry', 'Geometry'], ['alpha', 'Alpha (blend)']])),
@@ -372,9 +509,10 @@ export function mount() {
   registerTool('disp.paint', TOOL);
   view2d.registerOverlay(overlay2d);
   onHover((hit, x) => { if (x === null && ring.parent) removeHelper(ring); }); // the pointer left the 3D view
+  registerTool('disp.tag', TAG_TOOL);
   panel();
-  on('doc', () => { for (const n of owned.keys()) if (!cache.has(n)) drop(n); gen2++; status(); });
-  on('filters', () => { gen2++; view2d.invalidate(); });
+  on('doc', () => { for (const n of owned.keys()) if (!cache.has(n)) drop(n); gen2++; status(); tagView(); });
+  on('filters', () => { gen2++; view2d.invalidate(); tagView(); });
   for (const t of ['selection', 'tool']) on(t, status);
   on('cfg', ({ key }) => {
     if (controls.has(key)) controls.get(key).value = String(opt(key));
@@ -387,4 +525,11 @@ export function mount() {
   register('disp.sew', { title: 'Displacement: sew the selected', run: sewSel });
   register('disp.selectAll', { title: 'Select all displacements', run: selectAll });
   register('disp.paint', { title: 'Tool: paint displacements', run: () => setTool(S.tool === 'disp.paint' ? 'select' : 'disp.paint') });
+  register('disp.subdivide', { title: 'Displacement: subdivide (smooth the selected as one surface)', run: subdivideSel });
+  register('disp.noise', { title: 'Displacement: noise on the selected...', run: noiseSel });
+  register('disp.power', { title: 'Displacement: change power of the selected...', run: () => powerSel() });
+  register('disp.invertAlpha', { title: 'Displacement: invert alpha of the selected', run: invertSel });
+  for (const [id, bit, name] of FLAGS) register(id, { title: `Displacement: ${name.toLowerCase()} on the selected (toggle)`, run: () => toggleFlag(bit, name), on: () => allHave(dispItems(), bit) });
+  register('disp.tagWalkable', { title: 'Tool: tag displacement triangles walkable', run: () => tagTool('walkable'), on: () => tagOn('walkable') });
+  register('disp.tagBuildable', { title: 'Tool: tag displacement triangles buildable', run: () => tagTool('buildable'), on: () => tagOn('buildable') });
 }

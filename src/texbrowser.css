@@ -30,6 +30,8 @@
 .tb-tile span { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; height: 26px; line-height: 13px; font-size: 10px; text-align: center; color: var(--dim); overflow: hidden; word-break: break-all; }
 .tb-tile.on span { color: var(--text); }
 .tb-empty { padding: 24px 12px; text-align: center; color: var(--dim); }
+/* Alpha display (Textures: alpha): a checkerboard behind translucent thumbnails */
+.tb.alpha .tb-tile.alpha .tb-img { background-image: repeating-conic-gradient(#4a4e57 0 25%, #2a2d33 0 50%); background-size: 12px 12px; }
 
 
 /* Right-click menu (popover) */

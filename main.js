@@ -1,6 +1,6 @@
 import { app, BrowserWindow, ipcMain, dialog } from 'electron';
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, watch } from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -32,11 +32,50 @@ app.whenReady().then(() => {
   wc.on('before-input-event', (_, i) => { if (i.type === 'keyDown' && i.key === 'F12') wc.toggleDevTools(); });
   // Unsaved changes: the renderer owns the prompt (an in-app dialog), so nothing here blocks the event loop.
   win.on('close', e => { if (dirty && !closing) { e.preventDefault(); wc.send('close-request'); } });
+  // The page died (crash, out of memory, killed): name the last autosave and offer a reload, which offers it back
+  // (src/crash.js). The dead page cannot answer the close request, so Close skips it.
+  wc.on('render-process-gone', async (_, { reason }) => {
+    if (closing || reason === 'clean-exit' || win.isDestroyed()) return;
+    const st = autosave && (await fs.stat(autosave).catch(() => null));
+    const { response } = await dialog.showMessageBox(win, {
+      type: 'error', title: 'TF2 Editor', buttons: ['Reload', 'Close'], defaultId: 0, cancelId: 1, noLink: true,
+      message: `The editor stopped (${reason}).`,
+      detail: st ? `The last autosave is ${autosave}, from ${st.mtime.toLocaleString()}. Reload starts the editor again and offers it back when it is newer than its map.`
+        : 'There is no autosave of this map: changes since the last save are lost.',
+    });
+    dirty = false; // the reloaded page reports its own state
+    if (response === 0) wc.reload();
+    else { closing = true; win.close(); }
+  });
 });
 app.on('window-all-closed', () => app.quit());
 
-let dirty = false, closing = false;
+let dirty = false, closing = false, autosave = null;
 ipcMain.on('dirty', (_, d) => { dirty = !!d; });
+ipcMain.on('autosave', (_, p) => { autosave = typeof p === 'string' && path.isAbsolute(p) ? p : null; });
+
+// Asset hotload: the renderer names the TF2 folder; changes under its tf\custom, tf\materials and tf\models go back as
+// absolute paths ('assetsChanged') once 500 ms pass without another.
+// ponytail: fs.watch does not follow junctions, so mods linked into tf\custom do not hotload; watch their targets too
+// if that matters.
+let watchers = [], changed = new Set(), quiet = 0;
+ipcMain.on('watchAssets', (_, tf2) => {
+  for (const w of watchers) w.close();
+  watchers = [];
+  if (typeof tf2 !== 'string' || !path.isAbsolute(tf2)) return;
+  for (const dir of ['custom', 'materials', 'models'].map(d => path.join(tf2, 'tf', d))) {
+    let w;
+    try { w = watch(dir, { recursive: true }); } catch { continue; } // no such folder
+    w.on('change', (_, f) => {
+      if (!f) return;
+      changed.add(path.join(dir, String(f)));
+      clearTimeout(quiet);
+      quiet = setTimeout(() => { if (win && !win.isDestroyed()) win.webContents.send('assetsChanged', [...changed]); changed.clear(); }, 500);
+    });
+    w.on('error', () => w.close()); // the folder went away; an unhandled 'error' would end the app
+    watchers.push(w);
+  }
+});
 ipcMain.on('closeNow', () => { closing = true; win?.close(); });
 // w x h: the smallest content size the renderer's layout fits in (src/layout.js). Grows the window when it is smaller.
 ipcMain.on('minSize', (_, w, h) => {

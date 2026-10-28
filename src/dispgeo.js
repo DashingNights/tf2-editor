@@ -298,3 +298,117 @@ export function sew(a, b) {
   if (k) { retag(a); retag(b); }
   return k;
 }
+
+// Hammer's Invert Alpha: every alpha a becomes 255 - a.
+export function invertAlpha(g) {
+  g.alpha = g.alpha.map(a => 255 - a);
+  return true;
+}
+
+// A number in [0, 1) from point p (to 1/8 unit) and seed: the same point always gives the same number.
+function hash(p, seed) {
+  let h = seed | 0;
+  for (const x of p) { h = Math.imul(h ^ Math.round(x * 8), 0x85ebca6b); h ^= h >>> 13; }
+  h = Math.imul(h, 0xc2b2ae35);
+  return ((h ^ (h >>> 16)) >>> 0) / 2 ** 32;
+}
+
+// Hammer's Noise: every vertex moves along the face normal by a random distance from min to max. The number comes from
+// the vertex's flat position and seed, so displacements on one plane that share an edge stay sewn. False when both are 0.
+export function noise(g, min, max, seed) {
+  if (!min && !max) return false;
+  positions(g).forEach((p, i) => setPos(g, i, add(p, mul(g.normal, min + (max - min) * hash(g.flat[i], seed)))));
+  retag(g);
+  return true;
+}
+
+// Bilinear sample of per-vertex vectors A (an n x n grid) at row u, column v (in vertex steps).
+function sample(A, n, u, v) {
+  const i = Math.min(n - 2, Math.floor(u)), j = Math.min(n - 2, Math.floor(v)), k = i * n + j;
+  return lerp(lerp(A[k], A[k + 1], v - j), lerp(A[k + n], A[k + n + 1], v - j), u - i);
+}
+
+// Hammer's power change: the grid resampled to power p (2-4), its displacements (normal * distance), offsets, offset
+// normals and alphas interpolated at the new vertices (going down keeps the vertices that stay as they were). The
+// triangle tags are computed again (forced ones go with the old triangles) and allowed_verts is the default again.
+// False when p is the power it has.
+export function setPower(g, p) {
+  if (p === g.power || !(p >= 2 && p <= 4)) return false;
+  const n = g.n, m = (1 << p) + 1, step = (n - 1) / (m - 1);
+  const at = A => Array.from({ length: m * m }, (_, k) => sample(A, n, Math.floor(k / m) * step, (k % m) * step));
+  const d = at(g.field.map((f, i) => mul(f, g.dist[i]))), l = d.map(v => (len(v) > 1e-9 ? len(v) : 0));
+  Object.assign(g, {
+    power: p, n: m, flat: flatGrid(g.corners, m), dist: l, field: d.map((v, i) => z0(l[i] ? mul(v, 1 / l[i]) : [0, 0, 0])),
+    offset: at(g.offset).map(z0), offNormal: at(g.offNormal).map(v => z0(unit(v))), alpha: at(g.alpha.map(a => [a])).map(a => a[0]),
+    tags: new Array(2 * (m - 1) ** 2).fill(0), allowed: ALLOWED(),
+  });
+  retag(g);
+  return true;
+}
+
+// Hammer's Subdivide, simplified to smoothing: the displacements gs as one surface. Vertices at one flat position
+// (shared edges and corners) are welded; each pass moves every welded vertex halfway to the average of its grid
+// neighbours (all its copies' neighbours). A vertex on a border edge that no other displacement of gs has stays, so open
+// borders and seams with displacements left out keep their place. Every copy of a welded vertex takes its position, so
+// shared edges come out sewn. Returns how many vertices moved.
+// ponytail: Laplacian passes round and shrink a closed box a little each run; Hammer fits a Catmull-Clark limit surface.
+export function subdivide(gs, passes = (Math.max(...gs.map(g => g.n)) - 1) / 2) {
+  const ids = new Map(), W = [], edges = new Map(), Ps = gs.map(positions), key = p => p.map(x => Math.round(x * 8)).join();
+  const id = gs.map((g, gi) => g.flat.map((f, i) => {
+    const k = key(f);
+    if (!ids.has(k)) { ids.set(k, W.length); W.push({ copies: [], nb: new Set(), p: [0, 0, 0] }); }
+    const w = W[ids.get(k)];
+    w.copies.push([gi, i]);
+    w.p = add(w.p, Ps[gi][i]);
+    return ids.get(k);
+  }));
+  W.forEach(w => { w.p = mul(w.p, 1 / w.copies.length); });
+  gs.forEach((g, gi) => {
+    const I = id[gi], b = border(g.n);
+    I.forEach((a, i) => neighbours(g.n, i).forEach(j => a !== I[j] && W[a].nb.add(I[j])));
+    b.forEach((i, k) => { const e = [I[i], I[b[(k + 1) % b.length]]].sort((x, y) => x - y).join(); edges.set(e, (edges.get(e) ?? 0) + 1); });
+  });
+  for (const [e, c] of edges) if (c < 2) for (const v of e.split(',')) W[v].fixed = true;
+  for (let s = 0; s < passes; s++) {
+    const next = W.map(w => (w.fixed || !w.nb.size ? w.p : lerp(w.p, mul([...w.nb].reduce((a, v) => add(a, W[v].p), [0, 0, 0]), 1 / w.nb.size), 0.5)));
+    W.forEach((w, k) => { w.p = next[k]; });
+  }
+  let moved = 0;
+  for (const w of W) for (const [gi, i] of w.copies) {
+    if (len(sub(w.p, Ps[gi][i])) < 1e-6) continue;
+    setPos(gs[gi], i, w.p);
+    moved++;
+  }
+  if (moved) gs.forEach(retag);
+  return moved;
+}
+
+// Triangle tag bits (Source's COREDISPTRI_TAG_*): [computed, force bit, forced value]. Hammer's Walkable and Buildable
+// tag tools write the force bit and value; CCoreDispInfo::IsTriWalkable / IsTriBuildable take the forced value when set.
+const TAG = { walkable: [1, 2, 4], buildable: [8, 16, 32] };
+// Tag t's walkable or buildable state: 'on' or 'off' (computed), 'forced on' or 'forced off'.
+export function tagState(t, kind) {
+  const [b, f, v] = TAG[kind];
+  return t & f ? (t & v ? 'forced on' : 'forced off') : t & b ? 'on' : 'off';
+}
+// Hammer's tag tools, one click: triangle i's walkable or buildable state flips. A forced triangle goes back to the
+// computed state; another is forced to the opposite of it.
+export function toggleTag(g, i, kind) {
+  const [b, f, v] = TAG[kind], t = g.tags[i];
+  g.tags[i] = t & f ? t & ~(f | v) : t | f | (t & b ? 0 : v);
+}
+
+// The triangle (index in triangles(n) order, as triangle_tags) that the ray from o along d hits first, or -1.
+export function rayTri(g, o, d) {
+  const P = positions(g);
+  let best = -1, near = Infinity;
+  triangles(g.n).forEach(([a, b, c], i) => {
+    const e1 = sub(P[b], P[a]), e2 = sub(P[c], P[a]), h = cross(d, e2), det = dot(e1, h);
+    if (Math.abs(det) < 1e-12) return;
+    const s = sub(o, P[a]), q = cross(s, e1), u = dot(s, h) / det, v = dot(d, q) / det, t = dot(e2, q) / det;
+    if (u < -1e-7 || v < -1e-7 || u + v > 1 + 1e-7 || t <= 0 || t >= near) return;
+    near = t;
+    best = i;
+  });
+  return best;
+}

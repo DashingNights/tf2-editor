@@ -1,6 +1,7 @@
 // Document, selection, undo/redo, geometry cache, show filters, grid, tool. No DOM, no three.js:
 // view3d fills cache entries' `mesh` on 'doc'.
 import * as V from '../vmf.js';
+import { merge } from './hullgeo.js';
 import { devMaterials } from './primitives.js';
 import { emit } from './bus.js';
 import { cfg, saveCfg } from './settings.js';
@@ -13,8 +14,9 @@ const api = window.api;
 // lastDup: translation of the last move that directly followed a clone (repeat duplicate), or null.
 // cursor: the last status message; coords: the 2D views' mouse position (its own status slot, so moving the mouse does
 // not wipe the message). showWorld: the details panel shows worldspawn (Map properties) until the selection changes.
-const gridOf = g => Math.min(1024, Math.max(1, +g || 64));
-export const S = { file: null, dirty: false, grid: gridOf(cfg.grid), tool: 'select', mode: 'object', cursor: '', coords: '', fly: false, preview: null, lin: null, last: [[0, 0, 0], [128, 128, 128]], lastDup: null, showWorld: false, history: null, gizmo: 'translate' };
+// pivot: a custom rotate / scale pivot (setPivot), or null. The grid goes from 1024 down to 0.125 (Hammer++'s microgrid).
+const gridOf = g => Math.min(1024, Math.max(0.125, +g || 64));
+export const S = { file: null, dirty: false, grid: gridOf(cfg.grid), tool: 'select', mode: 'object', cursor: '', coords: '', fly: false, preview: null, lin: null, last: [[0, 0, 0], [128, 128, 128]], lastDup: null, showWorld: false, history: null, gizmo: 'translate', pivot: null };
 export const doc = { root: null, world: null };
 export const sel = new Set(), faceSel = new Set(), cache = new Map();
 export const filters = {
@@ -106,7 +108,10 @@ export function isVisible(c) {
   return c.kinds.every(k => filters[k]);
 }
 
-const selChanged = () => { S.showWorld = false; selTouched(); emit('selection', { sel, faceSel }); };
+// The custom pivot belongs to the selection it was placed for (pivotSel): a different selection drops it.
+let pivotSel = new Set();
+const samePivotSel = () => sel.size === pivotSel.size && [...sel].every(n => pivotSel.has(n));
+const selChanged = () => { S.showWorld = false; if (S.pivot && !samePivotSel()) S.pivot = null; selTouched(); emit('selection', { sel, faceSel }); };
 // Map properties: nothing selected, the details panel shows worldspawn.
 export function showWorld() { sel.clear(); faceSel.clear(); S.showWorld = true; emit('selection', { sel, faceSel }); }
 
@@ -383,11 +388,18 @@ export function selBox() {
   const es = [...sel].map(n => cache.get(n)), mixed = !points();
   return boxOf(es.map(c => { const o = mixed && c.point && origin(c.node); return o?.length === 3 ? { min: o, max: o } : c; }));
 }
-// Gizmo and rotation pivot: a lone point entity's origin, else the centre of the selection's own box. null without a
-// selection.
+// Gizmo and rotation pivot: the custom pivot (setPivot), else a lone point entity's origin, else the centre of the
+// selection's own box. null without a selection.
 export function selPivot() {
   const f = selFrame();
-  return !f ? null : sel.size === 1 && points() ? origin([...sel][0]) : turnZ(f.box[0].map((x, k) => (x + f.box[1][k]) / 2), f.yaw);
+  return !f ? null : S.pivot ? [...S.pivot] : sel.size === 1 && points() ? origin([...sel][0]) : turnZ(f.box[0].map((x, k) => (x + f.box[1][k]) / 2), f.yaw);
+}
+// Hammer++'s movable pivot: p ([x, y, z]; null: back to the default) is what selPivot returns for the selection now,
+// until the selection changes. A move takes it along (transformSel). The gizmo goes to it.
+export function setPivot(p) {
+  S.pivot = p && sel.size ? [...p] : null;
+  pivotSel = new Set(sel);
+  emit('gizmo', S.gizmo);
 }
 
 // ---------- the selection's own angle ----------
@@ -461,11 +473,12 @@ export function movable(ns = sel) {
 }
 
 // p' = p * s + t, in the frame turned by yaw degrees about z when yaw is set (the selection's own axes: selFrame).
-// A move of exactly the clones made by the previous edit is remembered as S.lastDup.
+// A move of exactly the clones made by the previous edit is remembered as S.lastDup. A move takes the custom pivot along.
 export function transformSel(s, t, yaw = 0) {
   const ns = movable(), arm = dupArm, lock = cfg.texLock !== false, O = [0, 0, 0];
   dupArm = null;
   if (!ns.length) return;
+  if (S.pivot && s.every(x => x === 1)) { const T = turnZ(t, yaw); S.pivot = S.pivot.map((x, k) => x + T[k]); }
   edit(ns, [], () => ns.forEach(n => {
     if (yaw) V.rotate(n, O, 2, -yaw, lock);
     V.transform(n, s, t, lock);
@@ -496,7 +509,7 @@ export function deleteSel() {
 }
 
 // Clones of group members go into new groups (one per original group), so they select apart from the originals.
-// Cloned overlays name the cloned faces.
+// Cloned overlays name the cloned faces. A lone path node's clone goes into its path (linkPath).
 export function cloneSel() {
   if (!sel.size) return;
   const owners = [...new Set([...sel].map(owner))], clones = [], fresh = new Map(), ids = new Map();
@@ -508,9 +521,21 @@ export function cloneSel() {
       if (id) setGid(c, fresh.get(id) ?? fresh.set(id, V.get(newGroup(vgroups(groupOf(n) ?? { children: [] })), 'id')).get(id));
     }
     clones.forEach(c => V.remapSides(c, ids));
+    if (clones.length === 1 && cfg.pathAutoLink !== false) linkPath([...sel][0], clones[0]);
   });
   setSelection(clones);
   dupArm = new Set(clones);
+}
+
+// Hammer's path node clone: the clone c of a lone path_track or path_corner o goes into the path after o. It gets a
+// new unique targetname (o's with its number counted up, 'path1' when o has none) and keeps o's target; o targets it.
+function linkPath(o, c) {
+  if (!/^path_(track|corner)$/i.test(V.get(o, 'classname') ?? '')) return;
+  const names = new Set(unwrap(doc.root, 'entity').map(([e]) => V.get(e, 'targetname'))), [, base, num] = (V.get(o, 'targetname') || 'path').match(/^(.*?)(\d*)$/);
+  let i = +num, name;
+  do name = base + String(++i).padStart(num.length, '0'); while (names.has(name));
+  V.set(c, 'targetname', name);
+  V.set(o, 'target', name);
 }
 
 // Blockout mode: new brushes get dev textures by face direction and join the visgroup of the first selected object
@@ -728,6 +753,26 @@ export function replaceSolids(list, { group = true, ids } = {}) {
   });
 }
 
+// Hammer++'s Merge: the selected solids become one, the convex hull of their corners (hullgeo merge), in the first
+// one's place: its id, owner and editor block (group, visgroups). The others go, and so do brush entities and groups
+// they leave empty; overlays on their faces move to the hull's faces on the same planes. One undo step. False when
+// fewer than two solids are selected or their corners span no volume.
+export function mergeSel() {
+  const solids = selSolids(), ids = new Map(), h = solids.length > 1 && merge(solids, nextId, ids);
+  if (!h) return false;
+  const { root, world } = doc, [s, ...rest] = solids, owners = [...new Set(rest.map(owner))], gs = new Set(rest.map(n => gid(top(cache.get(n)))).filter(Boolean));
+  const users = sideUsers(ids, [h]);
+  edit([s], [...new Set([...owners, root, world, ...users])], () => {
+    [s.kv, s.children] = [h.kv, h.children];
+    for (const o of rest) { const l = listOf(o); l.splice(l.indexOf(o), 1); }
+    for (const o of owners) if (o !== world && !o.children.some(x => x.name === 'solid' || x.name === 'hidden')) root.children.splice(root.children.indexOf(o), 1);
+    prune(gs);
+    users.forEach(e => V.remapSides(e, ids));
+  });
+  setSelection([s]);
+  return true;
+}
+
 // points: 3 points on the plane (vmf.js clip). Keeps both pieces.
 export const clipSel = points => replaceSel((s, ids) => V.clip(s, points, nextId, ids).filter(Boolean));
 // Walls of thickness t (default: the grid). Displacement brushes stay as they are (like carve; their walls would cut
@@ -803,7 +848,7 @@ export function load(text, file) {
   Object.assign(doc, { root, world });
   maxId = 0;
   (function scan(n) { for (const [k, v] of n.kv) if (k === 'id') maxId = Math.max(maxId, +v || 0); n.children.forEach(scan); })(root);
-  Object.assign(S, { file, dirty: false, preview: null, lastDup: null });
+  Object.assign(S, { file, dirty: false, preview: null, lastDup: null, pivot: null });
   dupArm = null;
   sel.clear();
   faceSel.clear();

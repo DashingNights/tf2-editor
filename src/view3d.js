@@ -9,7 +9,7 @@ import { register, held } from './commands.js';
 import { cfg, setCfg } from './settings.js';
 import { getMaterial, flatColor, clean } from './materials.js';
 import { el } from './dom.js';
-import { extract } from './lighting.js';
+import { extract, atten, reach, luxels, densityHue, renderFx } from './lighting.js';
 import * as snap from './snap.js';
 import * as texdrag from './texdrag.js';
 
@@ -29,21 +29,53 @@ const sn = (x, g) => Math.round(x / g) * g;
 // ---------- render modes and brush meshes ----------
 // textured: materials.js materials (flat colour until the VTF loads). flat / wireframe: one flat colour per material.
 // lit: a Lambert copy of each textured material (flat shaded, no vertex colour shade) lit by the map's lights.
-const RMODES = ['textured', 'flat', 'wireframe', 'lit'];
+// lightmap: Hammer's lightmap grid, a checker cell per luxel tinted by the side's lightmap scale (LMAP).
+const RMODES = ['textured', 'flat', 'wireframe', 'lit', 'lightmap'];
 let rmode = RMODES.includes(cfg.renderMode) ? cfg.renderMode : 'textured';
 const flats = new Map(), lits = new Map();
 const flatMat = name => flats.get(name) ?? flats.set(name, new THREE.MeshBasicMaterial({ color: flatColor(name), vertexColors: true, wireframe: rmode === 'wireframe' })).get(name);
+// onBeforeRender: materials.js proxies animate the copy while it is drawn.
 function copyLit(b, l) {
-  for (const k of ['map', 'transparent', 'depthWrite', 'alphaTest', 'blending', 'side']) l[k] = b[k];
+  for (const k of ['map', 'transparent', 'depthWrite', 'alphaTest', 'blending', 'side', 'onBeforeRender']) l[k] = b[k];
   l.color.copy(b.color);
   l.needsUpdate = true;
+  fxSync(l);
 }
 function litMat(name) {
   let l = lits.get(name);
-  if (!l) { lits.set(name, (l = new THREE.MeshLambertMaterial({ flatShading: true }))); copyLit(getMaterial(name), l); }
+  if (!l) { lits.set(name, (l = new THREE.MeshLambertMaterial({ flatShading: true }))); l.onBeforeCompile = litShader; copyLit(getMaterial(name), l); }
   return l;
 }
-const matsOf = m => m.userData.mats?.map(n => (rmode === 'textured' ? getMaterial(n) : rmode === 'lit' ? litMat(n) : flatMat(n))) ?? MAT;
+// Brush entity render effects (lighting.js renderFx: rendercolor, renderamt) in the textured and lit modes: a copy of
+// the mode's material per effect, kept in step with it. View: render effects (cfg.renderFx) turns them off.
+const fxs = new Map(), fxTint = new THREE.Color(); // material -> Map(effect key -> [copy, effect])
+function fxMat(b, fx) {
+  if (!fx || cfg.renderFx === false) return b;
+  const by = fxs.get(b) ?? fxs.set(b, new Map()).get(b);
+  let e = by.get(fx.key);
+  if (!e) { by.set(fx.key, (e = [b.clone(), fx])); fxCopy(b, ...e); }
+  return e[0];
+}
+function fxCopy(b, f, fx) {
+  f.copy(b);
+  Object.assign(f, { onBeforeRender: b.onBeforeRender, onBeforeCompile: b.onBeforeCompile });
+  f.color.multiply(fxTint.setRGB(...fx.tint));
+  if (fx.alpha < 1 || fx.add) Object.assign(f, { transparent: true, depthWrite: false, opacity: fx.alpha, blending: fx.add ? THREE.AdditiveBlending : THREE.NormalBlending });
+  f.needsUpdate = true;
+}
+const fxSync = b => fxs.get(b)?.forEach(([f, fx]) => fxCopy(b, f, fx));
+// Lightmap density: a 2 x 2 checker, one texel per luxel (makeMesh puts luxel coordinates in the uvs and the scale's
+// tint in the vertex colours). Tool faces have no lightmap and stay flat.
+const checker = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255, 150, 150, 150, 255, 150, 150, 150, 255, 255, 255, 255, 255]), 2, 2);
+Object.assign(checker, { wrapS: THREE.RepeatWrapping, wrapT: THREE.RepeatWrapping, magFilter: THREE.NearestFilter, minFilter: THREE.LinearMipmapLinearFilter, generateMipmaps: true, needsUpdate: true });
+checker.repeat.set(0.5, 0.5);
+const LMAP = new THREE.MeshBasicMaterial({ map: checker, vertexColors: true });
+function matFor(m, n) {
+  if (rmode === 'textured') return fxMat(getMaterial(n), m.userData.fx);
+  if (rmode === 'lit') return fxMat(litMat(n), m.userData.fx);
+  return rmode === 'lightmap' && m.userData.lm && !n.startsWith('tools/') ? LMAP : flatMat(n);
+}
+const matsOf = m => m.userData.mats?.map(n => matFor(m, n)) ?? MAT;
 // Builder meshes: userData.mats (material names per geometry group) get the brush materials; the others keep their
 // own material when textured or lit and a flat stand-in of its colour otherwise.
 const stand = new WeakMap();
@@ -72,19 +104,24 @@ let slopes = !!cfg.slopeTint; // tint faces too steep to walk on (0 < normal z <
 // c: a cache entry, or { node, faces, point } for previews. Brushes get one geometry group per material with texel
 // UVs (vmf.js uv; materials.js sets texture.repeat to 1/size) and the face shade as vertex colour. Point entities
 // get their 2D colour in the vertex colours. userData.tri maps each triangle, in emitted order, to its face index.
+// Lightmap mode (userData.lm): luxel UVs and the lightmap scale's tint instead. userData.fx: the brush entity's
+// render effect.
 export function makeMesh(c) {
   const pos = [], uv = [], col = [], tri = [], g = new THREE.BufferGeometry(), tint = new THREE.Color(c.point ? c.color2d : 0xffffff);
   const byMat = Map.groupBy(c.faces.map((f, fi) => [f, fi]), ([f]) => (c.point ? '' : clean(V.get(f.side, 'material'))));
-  for (const fs of byMat.values()) {
+  const lm = rmode === 'lightmap' && !c.point, lc = new THREE.Color(1, 1, 1);
+  for (const [name, fs] of byMat) {
     const start = pos.length / 3;
     for (const [f, fi] of fs) {
-      const t = c.point ? null : V.uv(f, 1, 1), k = 0.72 + 0.2 * f.n[2] + 0.08 * f.n[0];
+      const t = c.point ? null : lm ? luxels(f) : V.uv(f, 1, 1), k = 0.72 + 0.2 * f.n[2] + 0.08 * f.n[0];
       const red = slopes && !c.point && f.n[2] > 1e-3 && f.n[2] < 0.7 ? 0.3 : 1;
+      if (lm && !name.startsWith('tools/')) lc.setHSL(densityHue(V.get(f.side, 'lightmapscale')), 0.75, 0.55);
+      else lc.setRGB(1, 1, 1);
       for (let i = 1; i < f.pts.length - 1; i++) {
         for (const j of [0, i, i + 1]) {
           pos.push(...f.pts[j]);
           uv.push(...(t ? t[j].map(x => x || 0) : [0, 0])); // || 0: a malformed uaxis gives NaN
-          col.push(tint.r * k, tint.g * k * red, tint.b * k * red);
+          col.push(tint.r * k * lc.r, tint.g * k * red * lc.g, tint.b * k * red * lc.b);
         }
         tri.push(fi);
       }
@@ -94,11 +131,13 @@ export function makeMesh(c) {
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
   g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-  const m = new THREE.Mesh(g, MAT);
-  m.userData = { node: c.node, tri, mats: c.point ? null : [...byMat.keys()] };
+  const m = new THREE.Mesh(g, MAT), ent = !c.point && c.owner?.name === 'entity' ? c.owner : null;
+  m.userData = { node: c.node, tri, mats: c.point ? null : [...byMat.keys()], lm, fx: ent && renderFx(ent) };
   m.material = matsOf(m);
-  // Lit mode: the sun's shadow. Tool brushes cast none except nodraw and blocklight (opaque to vrad too).
-  m.castShadow = !c.point && m.userData.mats.some(n => !n.startsWith('tools/') || /^tools\/tools(nodraw|blocklight)$/.test(n));
+  // Lit mode: the sun's shadow. Tool brushes cast none except nodraw and blocklight (opaque to vrad too), brush
+  // entities none but func_detail (or with vrad_brush_cast_shadows, as vrad).
+  const casts = !ent || V.get(ent, 'classname') === 'func_detail' || V.get(ent, 'vrad_brush_cast_shadows') === '1';
+  m.castShadow = !c.point && casts && m.userData.mats.some(n => !n.startsWith('tools/') || /^tools\/tools(nodraw|blocklight)$/.test(n));
   m.receiveShadow = !c.point;
   m.matrixAutoUpdate = false; // identity except while a drag previews the selection (see render)
   return m;
@@ -254,11 +293,13 @@ function setLeak(pts) {
 
 // ---------- lit mode: the map's lights (lighting.js) ----------
 // Point and spot lights live in fixed pools (a new light count recompiles every lit material), filled with the lights
-// nearest the camera and refilled after it moves REFILL units. Only light_environment casts shadows (one shadow map
-// over the brushes that cast them, redrawn on edits only: a sky box around the map would stretch its texels past the
-// thickness of walls and floors, and light leaks through them). Three's Lambert divides by pi, so PI * brightness gives Source's value
-// at 100 units; LIT_SCALE tones down maps whose lights add up past white.
-const MAX_LIGHTS = 64, MAX_SPOTS = 16, REFILL = 256, LIT_SCALE = 0.6;
+// nearest the camera and refilled after it moves REFILL units; their falloff is vrad's (litShader). light_environment
+// casts the sun's shadow (one shadow map over the brushes that cast them, redrawn on edits only: a sky box around the
+// map would stretch its texels past the thickness of walls and floors, and light leaks through them). The first slots
+// of each pool cast shadows too (SHADOWS in all, cfg.lightShadows): they hold the lights brightest at the camera, and
+// a slot's shadow is redrawn when its light changes. Three's Lambert divides by pi, so PI * brightness gives Source's
+// value at 100 units; LIT_SCALE tones down maps whose lights add up past white.
+const MAX_LIGHTS = 64, MAX_SPOTS = 16, REFILL = 256, LIT_SCALE = 0.6, SHADOWS = 4;
 const rig = new THREE.Group(), sun = new THREE.DirectionalLight(), sky = new THREE.HemisphereLight();
 const pools = { point: [], spot: [] };
 let lights = [], litAt = null;
@@ -267,43 +308,94 @@ sun.castShadow = true;
 sun.shadow.mapSize.set(4096, 4096);
 sun.shadow.bias = -0.0002;
 sun.shadow.normalBias = 2;
+sun.shadow.autoUpdate = false;
 rig.add(sun, sun.target, sky);
+
+// Lit materials (onBeforeCompile) light with vrad's falloff instead of three's inverse square: a pool light's decay
+// is its slot in VRAD, which holds (c, l, q, fade start) of lighting.js falloff, and its distance the fade end. The
+// GLSL is lighting.js atten.
+const VRAD = { value: Array.from({ length: MAX_LIGHTS + MAX_SPOTS }, () => new THREE.Vector4()) };
+const PARS = THREE.ShaderChunk.lights_pars_begin.replace(/float getDistanceAttenuation[\s\S]*?\n}\n/, `uniform vec4 vradK[ ${MAX_LIGHTS + MAX_SPOTS} ];
+float getDistanceAttenuation( const in float d, const in float end, const in float slot ) {
+	vec4 k = vradK[ int( slot + 0.5 ) ];
+	float e = k.z < 0.0 ? min( d, k.w ) : d;
+	float f = 1.0 / max( k.x + e * ( k.y + e * k.z ), 1e-4 );
+	if ( end > k.w ) f *= saturate( ( end - d ) / ( end - k.w ) );
+	else if ( end > 0.0 && d > end ) f = 0.0;
+	return f;
+}
+`);
+if (PARS === THREE.ShaderChunk.lights_pars_begin) console.warn('lit mode: the vrad falloff did not fit this three.js version');
+export function litShader(s) {
+  s.uniforms.vradK = VRAD;
+  s.fragmentShader = s.fragmentShader.replace('#include <lights_pars_begin>', PARS);
+}
 
 function resizePool(kind, n) {
   const p = pools[kind];
   while (p.length > n) { const l = p.pop(); rig.remove(l, l.target ?? l); l.dispose(); }
-  while (p.length < n) { const l = kind === 'spot' ? new THREE.SpotLight() : new THREE.PointLight(); p.push(l); rig.add(l); if (l.target) rig.add(l.target); }
+  while (p.length < n) {
+    // bias 0: their depth is perspective, where -0.0005 is some 40 units at 200; the normal bias keeps faces off acne
+    const l = kind === 'spot' ? new THREE.SpotLight() : new THREE.PointLight();
+    Object.assign(l.shadow, { autoUpdate: false, bias: 0, normalBias: 2 });
+    l.shadow.mapSize.set(512, 512);
+    p.push(l);
+    rig.add(l);
+    if (l.target) rig.add(l.target);
+  }
 }
-// Source's default falloff is quadratic, normalised to full brightness at 100 units. With _fifty_percent_distance the
-// light stays flat and fades out: three's distance window is at 50% at 0.736 of its distance.
-function setLight(L, l) {
+// slot: the light's VRAD entry. A shadow slot's camera reaches as far as the light does.
+function setLight(L, l, slot) {
+  const a = l.att;
   L.position.set(...l.origin);
   L.color.setRGB(...l.color);
-  const flat = l.fifty > 0;
-  L.decay = flat ? 0 : 2;
-  L.distance = l.zero || (flat ? l.fifty / 0.736 : l.distance);
-  L.intensity = Math.PI * LIT_SCALE * (flat ? 1 : 1e4);
+  L.intensity = Math.PI * LIT_SCALE;
+  L.decay = slot;
+  L.distance = a.end;
+  VRAD.value[slot].set(a.c, a.l, a.q, a.start);
+  if (L.castShadow) { L.shadow.camera.far = reach(a, Math.max(...l.color) * LIT_SCALE); L.shadow.camera.updateProjectionMatrix(); }
   if (l.kind !== 'spot') return;
   L.angle = Math.min(l.cone, 89) * D2R;
   L.penumbra = Math.min(1, Math.max(0, 1 - l.inner / l.cone));
   L.target.position.set(...l.origin.map((x, k) => x + l.dir[k] * 64));
 }
-function fillPools() {
+// all: redraw every light's shadow (the map changed).
+function fillPools(all = false) {
   litAt = cam.position.clone(); // the fly camera, or the playtest's
-  const d2 = l => litAt.distanceToSquared(lv.set(...l.origin));
+  const d2 = l => litAt.distanceToSquared(lv.set(...l.origin)), at = l => Math.max(...l.color) * atten(l.att, Math.sqrt(d2(l)));
+  let redraw = all;
   for (const kind of ['point', 'spot']) {
-    const near = lights.filter(l => l.kind === kind).sort((a, b) => d2(a) - d2(b));
-    pools[kind].forEach((L, i) => setLight(L, near[i]));
+    const pool = pools[kind], ls = lights.filter(l => l.kind === kind), n = pool.filter(L => L.castShadow).length;
+    const strong = n ? [...ls].sort((a, b) => at(b) - at(a)).slice(0, n) : [];
+    const order = [...strong, ...ls.filter(l => !strong.includes(l)).sort((a, b) => d2(a) - d2(b))];
+    pool.forEach((L, i) => {
+      if (L.castShadow && (all || L.userData.light !== order[i])) L.shadow.needsUpdate = redraw = true;
+      L.userData.light = order[i];
+      setLight(L, order[i], (kind === 'spot' ? MAX_LIGHTS : 0) + i);
+    });
   }
+  if (redraw && renderer) renderer.shadowMap.needsUpdate = true;
+}
+// The first n slots of a pool cast shadows; a slot that stops frees its shadow map.
+function shadowSlots(pool, n) {
+  pool.forEach((L, i) => {
+    L.castShadow = i < n;
+    if (!L.castShadow && L.shadow.map) { L.shadow.map.dispose(); L.shadow.map = null; }
+  });
 }
 // Sun and sky from light_environment (the sun shines along lighting.js lightDir); without one a dim white sky, bright
 // when the map has no lights at all (Source draws such maps fullbright).
 function buildRig() {
   lights = extract(doc.root);
-  const count = k => lights.filter(l => l.kind === k).length, spots = Math.min(count('spot'), MAX_SPOTS);
+  const count = k => lights.filter(l => l.kind === k).length, spots = Math.min(count('spot'), MAX_SPOTS), points = Math.min(count('point'), MAX_LIGHTS - spots);
   resizePool('spot', spots);
-  resizePool('point', Math.min(count('point'), MAX_LIGHTS - spots));
-  fillPools();
+  resizePool('point', points);
+  // shadow slots: SHADOWS in all, half of them spots while there are points enough
+  const on = cfg.lightShadows !== false, sp = on ? Math.min(spots, SHADOWS - Math.min(points, SHADOWS / 2)) : 0;
+  shadowSlots(pools.spot, sp);
+  shadowSlots(pools.point, on ? Math.min(points, SHADOWS - sp) : 0);
+  fillPools(true);
+  sun.shadow.needsUpdate = true;
   const env = lights.find(l => l.kind === 'sun'), casters = [...cache.values()].filter(c => c.mesh?.castShadow), [mn, mx] = boxOf(casters.length ? casters : cache.values());
   sun.visible = !!env && mn.every(Number.isFinite);
   sky.intensity = Math.PI * (env ? 1 : lights.length ? 0.15 : 0.8);
@@ -373,6 +465,8 @@ export function snapMark(at) {
 // Display-only objects (scale aids, previews): drawn, never hit by pick() (it tests cache meshes only).
 export function addHelper(o) { scene.add(o); invalidate(); }
 export function removeHelper(o) { scene.remove(o); invalidate(); }
+// The render mode now (playtest's unsaved switch included): sky.js reads it before every frame for the sky and fog.
+export const renderMode = () => rmode;
 
 // fn(hit, x, y) after the pointer moves over the 3D view, at most once per animation frame. hit is pick()'s result;
 // x, y and hit are null once the pointer leaves. Returns the unsubscribe function.
@@ -396,12 +490,15 @@ let hook = null;
 export function setDrawHook(h) { hook = h; }
 export const drawBusy = () => !!hook?.busy; // a drawn primitive waits for its height click
 
-// 'textured' | 'flat' | 'wireframe' | 'lit'. Saved as cfg.renderMode unless save is false. Returns the mode it replaces.
+// 'textured' | 'flat' | 'wireframe' | 'lit' | 'lightmap'. Saved as cfg.renderMode unless save is false. Returns the
+// mode it replaces.
 export function setRenderMode(mode, save = true) {
   const was = rmode;
   rmode = mode;
   for (const m of [MAT, ...flats.values()]) m.wireframe = mode === 'wireframe';
   if (mode === 'lit') { scene.add(rig); buildRig(); } else scene.remove(rig);
+  // luxel uvs and tints are in the geometry: brush meshes are made again into and out of the lightmap mode
+  if ((was === 'lightmap') !== (mode === 'lightmap')) { for (const c of cache.values()) if (c.mesh && !c.mesh.userData.built) c.mesh = null; syncMeshes(); }
   for (const c of cache.values()) if (c.mesh) applyMode(c.mesh);
   if (save && cfg.renderMode !== mode) setCfg('renderMode', mode);
   hudText();
@@ -539,7 +636,7 @@ const proxy = new THREE.Object3D(), MODES = ['translate', 'rotate', 'scale'], NA
 let gz = null, shift = false; // the gizmo mode is S.gizmo (shared with poly edit), its space cfg.gizmoSpace
 // Snap steps: grid (Shift: a quarter, at least 1 unit), 1 unit with grid snapping off; rotation in degrees, 0.5 with
 // snapping off.
-const step = () => (!cfg.snapGrid ? 1 : shift ? Math.max(1, S.grid / 4) : S.grid);
+const step = () => (!cfg.snapGrid ? 1 : shift ? Math.min(S.grid, Math.max(1, S.grid / 4)) : S.grid);
 const rstep = () => (!cfg.snapRotation ? 0.5 : shift ? +cfg.rotationStepFine || 5 : +cfg.rotationStep || 15);
 const pointOnly = () => [...sel].every(n => cache.get(n)?.point);
 
@@ -869,7 +966,7 @@ function down(e) {
   if (e.button === 1) { // face mode: middle-drag moves the texture, Ctrl+middle-drag turns it (texdrag.js)
     e.preventDefault();
     const h = S.mode === 'face' && pick(x, y);
-    if (h?.node.name !== 'solid') return;
+    if (!h || h.node.name !== 'solid') return; // h is false outside face mode
     texdrag.start(h, e.ctrlKey);
     canvas.setPointerCapture(e.pointerId);
     drag = { kind: 'tex' };
@@ -1035,7 +1132,12 @@ export function mount(el3d) {
   on('selection', () => { paint(); overlays(); placeGizmo(); });
   on('filters', () => { paint(); overlays(); });
   on('tool', () => { switchTool(); hov = null; setGeo(hovHi, []); paint(); overlays(); placeGizmo(); });
-  on('material', ({ name, material }) => { if (lits.has(name)) copyLit(material, lits.get(name)); invalidate(); });
+  on('material', ({ name, material }) => { fxSync(material); if (lits.has(name)) copyLit(material, lits.get(name)); invalidate(); });
+  on('proxies', invalidate); // animated materials were drawn: the next frame
+  on('cfg', ({ key }) => {
+    if (key === 'renderFx') { for (const c of cache.values()) if (c.mesh) applyMode(c.mesh); invalidate(); }
+    if (key === 'lightShadows' && rmode === 'lit') buildRig();
+  });
   on('preview', invalidate);
   on('lin', setLeak);
   on('focus', fit);
@@ -1058,6 +1160,11 @@ export function mount(el3d) {
   register('renderFlat', { title: 'Render: flat', run: () => setRenderMode('flat'), on: () => rmode === 'flat' });
   register('renderWireframe', { title: 'Render: wireframe', run: () => setRenderMode('wireframe'), on: () => rmode === 'wireframe' });
   register('view.renderLit', { title: 'Render: lit (lighting preview from the map lights)', run: () => setRenderMode('lit'), on: () => rmode === 'lit' });
+  register('view.renderLightmap', { title: 'Render: lightmap density (a checker cell per luxel, red fine to blue coarse)', run: () => setRenderMode('lightmap'), on: () => rmode === 'lightmap' });
+  const flipOn = (key, what) => { setCfg(key, cfg[key] === false); setCursor(`${what} ${cfg[key] !== false ? 'on' : 'off'}`); }; // on by default
+  register('view.proxies', { title: 'View: animate materials (AnimatedTexture, TextureScroll proxies) (toggle)', run: () => flipOn('proxies', 'material proxies'), on: () => cfg.proxies !== false });
+  register('view.renderFx', { title: 'View: render effects of brush entities (rendercolor, renderamt) (toggle)', run: () => flipOn('renderFx', 'render effects'), on: () => cfg.renderFx !== false });
+  register('view.lightShadows', { title: 'Render: lit shadows of the lights brightest at the camera (toggle)', run: () => flipOn('lightShadows', 'light shadows'), on: () => cfg.lightShadows !== false });
   register('gizmo.move', { title: 'Gizmo: move', keys: ['w'], run: () => setGizmo('translate'), on: () => S.gizmo === 'translate' });
   register('gizmo.rotate', { title: 'Gizmo: rotate', keys: ['e'], run: () => setGizmo('rotate'), on: () => S.gizmo === 'rotate' });
   register('gizmo.scale', { title: 'Gizmo: scale (resize brushes)', keys: ['r'], run: () => setGizmo('scale'), on: () => S.gizmo === 'scale' });

@@ -1,15 +1,17 @@
 // func_instance (Hammer instances): the instance VMF drawn in place (origin + angles) as one tinted mesh that selects
 // the func_instance, its outlines in the 2D views, and Collapse (the contents merged into the map with vbsp's name
-// fixups). Files are read once and cached; 'instances.reload' reads them again.
+// fixups). Files are read once and cached; 'instances.reload' reads them again. Create from selection writes the
+// selection to a new instance file; Edit in place swaps a func_instance for its contents until Save in place.
 import * as THREE from 'three';
 import * as V from '../vmf.js';
 import * as F from './fgd.js';
-import { S, sel, cache, nextId, addObjects, open, setCursor, registerPointLook, touch } from './state.js';
+import { S, sel, cache, doc, nextId, addObjects, open, setCursor, registerPointLook, touch, edit, extra, objects, groups, nodesOf, setSelection } from './state.js';
 import { register } from './commands.js';
 import { cfg } from './settings.js';
 import { on } from './bus.js';
-import { registerBuilder, fan } from './view3d.js';
+import { registerBuilder, fan, setDimmer, refreshEntry } from './view3d.js';
 import { registerOverlay, invalidate as redraw2d } from './view2d.js';
+import { copyText, withGroupVgs, boundsOf } from './clipboard.js';
 import { ask, notice } from './dialog.js';
 
 const api = window.api;
@@ -48,6 +50,10 @@ export function placer(e) {
 export const fixName = (v, name, style) => (!v || /^[@!]/.test(v) || style === 2 ? v : style === 1 ? `${v}-${name}` : `${name}-${v}`);
 const NAME_KEYS = new Set(['targetname', 'parentname', 'target', 'filtername', 'damagefilter']);
 
+// What vbsp merges from an instance file: the world's solids and the entities but func_instance_parms (hidden ones stay
+// out).
+export const contents = inst => { const w = V.kids(inst, 'world')[0]; return [...(w ? V.kids(w, 'solid') : []), ...V.kids(inst, 'entity').filter(x => V.get(x, 'classname') !== 'func_instance_parms')]; };
+
 // The objects a func_instance stands for (Hammer's Collapse): the instance's world solids and entities with new ids,
 // $variables from replace01.. replaced, names fixed up like vbsp (name keys, values naming an instance entity, output
 // targets), moved to the func_instance's origin and angles; func_instance_parms and visgroup / group ids dropped.
@@ -58,11 +64,10 @@ export function collapse(inst, e, nextId, texLock = true, keyTypes = () => null)
   const style = +(V.get(e, 'fixup_style') ?? 0), name = V.get(e, 'targetname') || `InstanceAuto${V.get(e, 'id') ?? ''}`;
   const vars = e.kv.filter(([k]) => /^replace\d+$/i.test(k)).map(([, v]) => v.match(/^(\$\S+)\s*(.*)$/)).filter(Boolean).sort((a, b) => b[1].length - a[1].length);
   const sub = s => vars.reduce((t, m) => t.split(m[1]).join(m[2]), s);
-  const world = V.kids(inst, 'world')[0], ents = V.kids(inst, 'entity').filter(x => V.get(x, 'classname') !== 'func_instance_parms');
-  const names = new Set(ents.map(x => sub(V.get(x, 'targetname') ?? '')).filter(Boolean)), ids = new Map(), place = placer(e);
+  const objs = contents(inst), names = new Set(objs.filter(x => x.name === 'entity').map(x => sub(V.get(x, 'targetname') ?? '')).filter(Boolean)), ids = new Map(), place = placer(e);
   const fix = v => fixName(v, name, style), at = V.nums(V.get(e, 'origin') ?? '0 0 0'), [p, y, r] = V.nums(V.get(e, 'angles') ?? '0 0 0');
   const turn = n => [[0, r], [1, p], [2, y]].forEach(([k, deg]) => deg && V.rotate(n, [0, 0, 0], k, deg, texLock));
-  const out = [...(world ? V.kids(world, 'solid') : []), ...ents].map(o => {
+  const out = objs.map(o => {
     const c = V.clone(o, nextId, ids);
     (function strip(n) { for (const x of n.children) { if (x.name === 'editor') x.kv = x.kv.filter(q => q[0] !== 'visgroupid' && q[0] !== 'groupid'); strip(x); } })(c);
     if (c.name === 'entity') {
@@ -87,6 +92,43 @@ export function collapse(inst, e, nextId, texLock = true, keyTypes = () => null)
   });
   out.forEach(c => V.remapSides(c, ids, true));
   return out;
+}
+
+// The grid-snapped bottom centre of objects: a new instance's origin.
+export const anchor = (objs, g) => { const [mn, mx] = boundsOf(objs); return [(mn[0] + mx[0]) / 2, (mn[1] + mx[1]) / 2, mn[2]].map(x => Math.round(x / g) * g + 0); };
+
+// Edit in place: the contents of instance file root placed by func_instance e as collapse() places them, but with no
+// name fixups or $variables, so they write back as they were. eds: new id -> the groupid / visgroupid pairs the object
+// had in the file (they mean nothing in the map), for unplace().
+const OWN = q => q[0] === 'groupid' || q[0] === 'visgroupid';
+export function placed(root, e, nextId) {
+  const objs = collapse(root, { name: 'entity', kv: [['origin', V.get(e, 'origin') ?? '0 0 0'], ['angles', V.get(e, 'angles') ?? '0 0 0'], ['fixup_style', '2']], children: [] }, nextId);
+  const eds = Object.fromEntries(contents(root).map((o, i) => [V.get(objs[i], 'id'), V.kids(o, 'editor')[0]?.kv.filter(OWN) ?? []]).filter(x => x[1].length));
+  return { objs, eds };
+}
+
+// Save in place: instance file root (changed and returned) with its visible world solids and entities replaced by
+// copies of objs moved back out of e's origin and angles; func_instance_parms and hidden objects stay. Each copy drops
+// the map's groupid / visgroupid and gets its eds pairs back (new objects get none).
+export function unplace(root, objs, e, eds = {}) {
+  const at = V.nums(V.get(e, 'origin') ?? '0 0 0'), [p = 0, y = 0, r = 0] = V.nums(V.get(e, 'angles') ?? '0 0 0');
+  const out = objs.map(o => {
+    const c = structuredClone(o);
+    if (at.some(Boolean)) V.transform(c, [1, 1, 1], at.map(x => -x || 0), true);
+    [[2, y], [1, p], [0, r]].forEach(([k, deg]) => deg && V.rotate(c, [0, 0, 0], k, -deg, true));
+    for (const ed of V.kids(c, 'editor')) {
+      ed.kv = ed.kv.filter(q => !OWN(q));
+      const i = ed.kv.findIndex(q => q[0] === 'visgroupshown');
+      ed.kv.splice(i < 0 ? ed.kv.length : i, 0, ...(eds[V.get(c, 'id')] ?? []).map(q => [...q]));
+    }
+    return c;
+  });
+  let world = V.kids(root, 'world')[0];
+  if (!world) root.children.push((world = { name: 'world', kv: [['id', '1'], ['classname', 'worldspawn']], children: [] }));
+  world.children = [...out.filter(o => o.name === 'solid'), ...world.children.filter(c => c.name !== 'solid')];
+  root.children = root.children.filter(c => c.name !== 'entity' || V.get(c, 'classname') === 'func_instance_parms');
+  root.children.splice(root.children.indexOf(world) + 1, 0, ...out.filter(o => o.name === 'entity'));
+  return root;
 }
 
 // ---------- loaded files ----------
@@ -129,6 +171,18 @@ async function loaded(n) {
   const f = n && fileOf(n);
   await f?.ready;
   return f?.path ? f : null;
+}
+// func_instance n's file read again from disk (it may have changed since it was cached): { path, root } or null.
+async function fresh(n) {
+  const f = await loaded(n), t = f && (await api.read(f.path));
+  return typeof t === 'string' ? { path: f.path, root: V.parse(t) } : null;
+}
+// Drops a file just written from the cache: every func_instance showing it loads it again.
+function forget(path) {
+  const p = path.toLowerCase();
+  for (const [k, f] of files) if (k === p || f.path?.toLowerCase() === p) { f.geo?.dispose(); files.delete(k); }
+  touch([...cache.values()].filter(isInst).map(c => c.node));
+  redraw2d();
 }
 
 // ---------- drawing ----------
@@ -209,6 +263,96 @@ async function collapseSel() {
   if (done.length) setCursor(`collapsed ${done.length} instance(s) into ${objs.length} object(s)`);
 }
 
+// ---------- create from selection, edit in place ----------
+// The in-place edit, kept in extra (so undo and redo bring it back with the map, and the sidecar has it once the map is
+// saved): { inst: the func_instance's VMF text, start: objects with a higher id are the instance's (the contents and
+// whatever is made while it is open), eds: placed()'s }.
+const KEY = 'instanceEdit';
+export const inPlace = () => extra.kv.find(p => p[0] === KEY)?.[1] ?? null;
+const topOf = c => (c.owner === doc.world ? c.node : c.owner);
+
+// One undo step: objects out (with the hidden blocks holding them; their groups go once empty), objects in (solids after
+// the world's solids, entities after the entities, group blocks at the end of the world) and the in-place state set to
+// st (undefined: unchanged). Selects what came in.
+function swap(out, ins, st) {
+  const { root, world } = doc, gone = new Set(out), gids = new Set(out.map(o => V.get(V.kids(o, 'editor')[0] ?? { kv: [] }, 'groupid')).filter(Boolean));
+  const keep = c => !gone.has(c) && !(c.name === 'hidden' && c.children.some(x => gone.has(x)));
+  edit([], [root, world, extra], () => {
+    root.children = root.children.filter(keep);
+    world.children = world.children.filter(keep);
+    const used = groups();
+    world.children = world.children.filter(c => c.name !== 'group' || !gids.has(V.get(c, 'id')) || used.get(V.get(c, 'id'))?.length);
+    world.children.splice(world.children.findLastIndex(c => /^(solid|hidden)$/.test(c.name)) + 1, 0, ...ins.filter(o => o.name === 'solid'));
+    world.children.push(...ins.filter(o => o.name === 'group'));
+    root.children.splice(root.children.findLastIndex(c => /^(world|entity|hidden)$/.test(c.name)) + 1, 0, ...ins.filter(o => o.name === 'entity'));
+    if (st !== undefined) extra.kv = [...extra.kv.filter(p => p[0] !== KEY), ...(st ? [[KEY, st]] : [])];
+  });
+  setSelection(ins.flatMap(nodesOf));
+}
+
+// Create instance from selection: the selected objects (brush entities whole) written to a new VMF (save dialog, the
+// instances folder next to the map) relative to their grid-snapped bottom centre, then replaced by a func_instance
+// there whose file is relative to the map. One undo step.
+export async function fromSelection() {
+  if (!S.file) return notice('Save the map first: the instance file path is relative to it.');
+  const tops = [...new Set([...sel].map(n => topOf(cache.get(n))))], dir = S.file.replace(/[\\/][^\\/]*$/, ''), idir = `${dir}\\instances`;
+  if (!(await api.exists(idir))) { await api.writeBinary(`${idir}\\.new`, []); await api.remove(`${idir}\\.new`); } // ponytail: mkdir through writeBinary, until main.js has a mkdir call
+  let k = 1;
+  while (await api.exists(`${idir}\\instance_${k}.vmf`)) k++;
+  const path = await api.saveDialog(`${idir}\\instance_${k}.vmf`), rel = path && relTo(dir, path);
+  if (!path) return;
+  if (path.toLowerCase() === S.file.toLowerCase() || /^[a-z]:/i.test(rel)) return notice('Pick a new file on the map\'s drive (not the map itself): the instance path is relative to the map.');
+  const objs = tops.map(o => structuredClone(withGroupVgs(o))), at = anchor(objs, S.grid);
+  for (const o of objs) {
+    for (const ed of V.kids(o, 'editor')) ed.kv = ed.kv.filter(q => q[0] !== 'groupid');
+    V.transform(o, [1, 1, 1], at.map(x => -x || 0), true);
+  }
+  try { await api.write(path, copyText(false, objs).text); } catch (err) { return notice(`Could not write ${path}: ${err.message}`); }
+  forget(path);
+  const e = V.entity('func_instance', at, nextId);
+  e.kv.splice(2, 0, ['angles', '0 0 0'], ['file', rel], ['fixup_style', '0']);
+  swap(tops, [e]);
+  setCursor(`instance created: ${rel}`);
+}
+
+// Edit in place: the selected func_instance swapped for its contents in one new group (one undo step); the 3D view dims
+// the rest until Save in place.
+export async function editInPlace() {
+  if (inPlace()) return notice('An instance is open in place already: save it first (Instances: save the in-place edit).');
+  const [e] = selInst(), f = await fresh(e);
+  if (!f) return notice(`Instance file not found: ${V.get(e, 'file') || '(no file key)'}${S.file ? '' : ' (save the map first: the path is relative to it)'}`);
+  const start = +nextId(), { objs, eds } = placed(f.root, e, nextId), g = nextId();
+  for (const o of objs) { const ed = V.kids(o, 'editor')[0]; ed?.kv.splice(ed.kv.findIndex(q => q[0] === 'color') + 1, 0, ['groupid', g]); }
+  const block = { name: 'group', kv: [['id', g]], children: [{ name: 'editor', kv: [['color', '220 220 220'], ['visgroupshown', '1'], ['visgroupautoshown', '1']], children: [] }] };
+  swap([e], [...objs, block], { inst: V.serialize({ kv: [], children: [e] }), start, eds });
+  setCursor(`editing ${f.path} in place (Instances: save the in-place edit writes it back)`);
+}
+
+// Save in place: the objects made since Edit in place written back to the instance file (moved out of the origin and
+// angles), and the func_instance put back in their place (one undo step).
+export async function saveInPlace() {
+  const st = inPlace();
+  if (!st) return;
+  const e = V.parse(st.inst).children[0], f = await fresh(e), mine = objects().filter(o => +V.get(o, 'id') > st.start);
+  if (!f) return notice(`Instance file not found: ${V.get(e, 'file')}`);
+  if (!mine.length && (await ask(`Nothing is left of the instance. Write ${f.path} empty?`, ['Write', 'Cancel'])) !== 0) return;
+  try { await api.write(f.path, V.serialize(unplace(f.root, mine, e, st.eds))); } catch (err) { return notice(`Could not write ${f.path}: ${err.message}`); }
+  forget(f.path);
+  swap(mine, [e], null);
+  setCursor(`instance saved: ${f.path}`);
+}
+
+// While an instance is open in place the 3D view dims every object older than it (on top of the cordon's dimming).
+let dimFor = null, undim = null;
+function restate() {
+  const st = inPlace();
+  if (st === dimFor) return;
+  if (dimFor) setDimmer(undim);
+  dimFor = st;
+  if (st) { const was = (undim = setDimmer(c => +V.get(topOf(c), 'id') <= st.start || !!was?.(c))); }
+  for (const c of cache.values()) refreshEntry(c.node);
+}
+
 // InstancePath from gameinfo.txt ("maps/instances/" in TF2) in tf/custom/* and tf, the order of the GAME search paths.
 async function findDirs() {
   const tf = cfg.tf2 && `${cfg.tf2}\\tf`, info = tf && (await api.read(`${tf}\\gameinfo.txt`).catch(() => null));
@@ -230,4 +374,9 @@ export function mount() {
   register('instances.reload', { title: 'Instances: reload files', run: reload });
   register('instances.edit', { title: 'Instances: open the selected instance file', when: any, run: editInstance });
   register('instances.collapse', { title: 'Instances: collapse selected (merge into the map)', when: any, run: collapseSel });
+  register('instances.fromSelection', { title: 'Instances: create from selection (new instance file)...', when: () => sel.size > 0, run: fromSelection });
+  register('instances.editInPlace', { title: 'Instances: edit selected in place (rest of the map dimmed)', when: () => any() && !inPlace(), run: editInPlace });
+  register('instances.saveInPlace', { title: 'Instances: save the in-place edit (write the instance file back)', when: () => !!inPlace(), run: saveInPlace });
+  on('doc', restate);
+  on('sidecar', restate);
 }

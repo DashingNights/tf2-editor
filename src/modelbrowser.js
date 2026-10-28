@@ -1,7 +1,9 @@
-// Models panel: folder tree, search, filter (all, recent, favourites, used in map) and a virtualised grid of rendered
-// thumbnails over every model (models.js listModels). Click sets the model of the selected point entities (one undo
-// step), or with none selected arms the entity tool to place a prop with it; double-click opens a large preview;
-// right-click for favourites. Names are 'props_gameplay/cap_point_base' (the VMF gets models/<name>.mdl).
+// Models panel: folder tree, search (fuzzy words; * ? wildcards and !word filters: models.js query), filter (all,
+// recent, favourites, used in map) and a virtualised grid of rendered thumbnails over every model (models.js
+// listModels). Click sets the model of the selected point entities (one undo step), or with none selected arms the
+// entity tool to place a prop with it; double-click opens a large preview; right-click for favourites. Under the grid:
+// the attachments of the model last clicked or selected in the map. Names are 'props_gameplay/cap_point_base' (the VMF
+// gets models/<name>.mdl).
 import * as THREE from 'three';
 import * as V from '../vmf.js';
 import { on } from './bus.js';
@@ -10,7 +12,7 @@ import { pick } from './view3d.js';
 import { register } from './commands.js';
 import { cfg, setCfg } from './settings.js';
 import { search, buildTree, MODEL_MIME } from './texbrowser.js';
-import { listModels, getModel, modelPath, fgdDefaults, takesModel } from './models.js';
+import { listModels, getModel, modelPath, modelOf, fgdDefaults, takesModel, query, norm } from './models.js';
 import { registerPanel, show, pane } from './layout.js';
 import { el } from './dom.js';
 
@@ -114,7 +116,7 @@ function placed() {
 }
 
 // ---------- panel ----------
-let host, q, fsel, treeEl, grid, sizer, empty, foot, menu, dlg;
+let host, q, fsel, treeEl, grid, sizer, empty, strip, foot, menu, dlg;
 let names = [], base = [], view = [], root = null, folder = '', loading = false, cols = 1, cellW = 1, busy = 0;
 const opened = new Set(), shown = new Map(), queue = [];
 const FILTERS = { all: 'All', recent: 'Recent', favs: 'Favourites', used: 'Used in map' };
@@ -132,8 +134,9 @@ const footer = () => (foot.textContent = loading ? 'Loading models...' : !names.
   : `${view.length} of ${names.length}${pending ? '  |  placing ' + nameOf(pending) : ''}`);
 
 function refilter(keep = false) {
-  const inFolder = folder ? base.filter(n => n.startsWith(folder)) : base, s = q.value.trim().toLowerCase();
-  view = s ? search(s, inFolder) : inFolder;
+  const inFolder = folder ? base.filter(n => n.startsWith(folder)) : base, s = q.value.trim().toLowerCase(), { words, test } = query(s);
+  const kept = test ? inFolder.filter(test) : inFolder;
+  view = words ? search(words, kept) : kept;
   footer();
   empty.hidden = loading || !names.length || view.length > 0;
   empty.textContent = s ? `No models match "${s}"` : 'No models here';
@@ -201,6 +204,24 @@ function pump() {
 }
 const tileOf = e => e.target.closest?.('.mb-tile')?.dataset.n;
 
+// ---------- attachments of the model last clicked here, or of the selected entity's model (r: its cached model) ----------
+let infoOf = null;
+function showInfo(name, r = getModel(pathOf(name))) {
+  infoOf = name;
+  r.ready.then(x => {
+    if (infoOf !== name) return;
+    const a = x.info?.attachments ?? [];
+    strip.hidden = false;
+    strip.title = a.join('\n');
+    strip.replaceChildren(el('b', { textContent: name.slice(name.lastIndexOf('/') + 1) }), x.info ? ` attachments (${a.length}): ${a.join(', ') || 'none'}` : ': does not load');
+  });
+}
+function selectedInfo() {
+  const n = points().find(modelPath);
+  if (n) showInfo(nameOf(modelPath(n)), modelOf(n));
+  return n;
+}
+
 // ---------- large preview (drag to turn) ----------
 function preview(name) {
   dlg ??= document.body.appendChild(el('dialog', { id: 'mb-preview' }));
@@ -249,6 +270,7 @@ export function browse(name = nameOf(modelPath(points()[0]) ?? '')) {
   rebase();
   q.focus();
   q.select();
+  if (name) showInfo(nameOf(norm(name)));
 }
 
 async function load() {
@@ -260,15 +282,19 @@ async function load() {
 }
 
 const HTML = `
-<div class="mb-bar"><input class="mb-q" type="search" placeholder="Search models" spellcheck="false" title="Words match anywhere in the path; Enter uses the first"><select class="mb-filter" title="Filter"></select></div>
+<div class="mb-bar"><input class="mb-q" type="search" placeholder="Search models" spellcheck="false" title="Words match anywhere in the path; * and ? are wildcards; !word leaves out paths with word; Enter uses the first"><select class="mb-filter" title="Filter"></select></div>
 <div class="mb-main"><div class="mb-tree"></div><div class="mb-grid"><div class="mb-sizer"></div><div class="mb-empty" hidden></div></div></div>
+<div class="mb-info" hidden></div>
 <div class="mb-foot"></div>`;
+const CSS = `.mb-info { padding: 3px 8px; border-top: 1px solid var(--line); color: var(--dim); font-size: 11px; max-height: 4.6em; overflow: auto; scrollbar-width: thin; word-break: break-word; }
+.mb-info b { color: var(--text); font-weight: 600; }`;
 
 export function mount() {
   host = pane('models');
   host.classList.add('mb');
   host.innerHTML = HTML;
-  [q, fsel, treeEl, grid, sizer, empty, foot] = ['.mb-q', '.mb-filter', '.mb-tree', '.mb-grid', '.mb-sizer', '.mb-empty', '.mb-foot'].map(s => host.querySelector(s));
+  document.head.append(el('style', { textContent: CSS }));
+  [q, fsel, treeEl, grid, sizer, empty, strip, foot] = ['.mb-q', '.mb-filter', '.mb-tree', '.mb-grid', '.mb-sizer', '.mb-empty', '.mb-info', '.mb-foot'].map(s => host.querySelector(s));
   fsel.append(...Object.entries(FILTERS).map(([value, textContent]) => el('option', { value, textContent })));
   menu = document.body.appendChild(el('div', { className: 'mb-menu', popover: 'auto' }));
   let t = 0;
@@ -287,7 +313,7 @@ export function mount() {
   };
   grid.onscroll = draw;
   new ResizeObserver(() => { clear(); draw(); }).observe(grid);
-  grid.onclick = e => { const n = tileOf(e); if (n) choose(n); };
+  grid.onclick = e => { const n = tileOf(e); if (n) { choose(n); showInfo(n); } };
   grid.ondblclick = e => { const n = tileOf(e); if (n) preview(n); };
   grid.oncontextmenu = e => { const n = tileOf(e); if (!n) return; e.preventDefault(); openMenu(e, n); };
   // drag a tile onto the 3D view: a prop there
@@ -311,6 +337,14 @@ export function mount() {
 
   on('doc', ch => { created = pending && S.tool === 'entity' ? ch : null; });
   on('selection', placed);
+  on('selection', selectedInfo);
+  // models.js forget: the model reads again, so does its thumbnail (tiles on screen redrawn once per burst)
+  let redraw = 0;
+  on('modelForget', p => {
+    thumbs.delete(nameOf(p));
+    clearTimeout(redraw);
+    redraw = setTimeout(() => { clear(); draw(); if (infoOf) showInfo(infoOf); }, 50);
+  });
   on('tool', () => { if (S.tool !== 'entity' && pending) { pending = null; footer(); } });
   on('cfg', ({ key }) => {
     if (key === 'tf2') { thumbs.clear(); load(); }
@@ -319,5 +353,9 @@ export function mount() {
   on('file', () => fsel.value === 'used' && rebase(true));
   register('models.show', { title: 'Models: show browser', run: () => show('models') });
   register('models.find', { title: 'Models: search (the selected entity\'s model)', run: () => browse() });
+  register('models.attachments', { title: 'Models: attachments of the selected model', run: () => {
+    show('models');
+    if (!selectedInfo() && !infoOf) setCursor('Select a prop or click a model in the Models panel to list its attachments');
+  } });
   load();
 }

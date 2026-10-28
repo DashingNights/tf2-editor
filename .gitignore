@@ -4,3 +4,4 @@ dev/scratch/
 dev/userdata*/
 *.log
 *.lnk
+.claude/

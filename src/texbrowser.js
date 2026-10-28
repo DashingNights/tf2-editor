@@ -7,7 +7,7 @@ import { on } from './bus.js';
 import { S, sel, faceSel, cache, edit, mergeUndo, setSelection, setFaceSelection, setMode, setCursor, objects } from './state.js';
 import { register, fuzzy } from './commands.js';
 import { cfg, setCfg } from './settings.js';
-import { listMaterials, customMaterials, thumbnail, flatColor, clean } from './materials.js';
+import { listMaterials, customMaterials, thumbnail, flatColor, clean, getVmt, forget, matCache } from './materials.js';
 import { pick } from './view3d.js';
 import { show, pane } from './layout.js';
 import { el } from './dom.js';
@@ -138,6 +138,9 @@ let size = thumbSize(), cols = 1, cellW = 1, rowH = 1, busy = 0, timer = 0;
 const opened = new Set(), shown = new Map(), queue = []; // shown: view index -> tile
 const cur = () => clean(cfg.material);
 const px = () => (size <= 64 ? 64 : 128); // thumbnail size: two buckets, so the slider does not refetch every step
+// Alpha display (Textures: alpha, cfg.textureAlpha): a checkerboard behind the thumbnails of translucent, alpha-tested
+// and additive materials (their thumbnails keep the texture's alpha).
+const alphaOn = () => cfg.textureAlpha !== false;
 
 // Filter -> base and the folder tree. Recent sorts by recency. keep: stay at the scroll position (the list changed
 // under the user, not by their choice).
@@ -243,6 +246,7 @@ function pump() {
     thumbnail(t.dataset.n, px())
       .then(u => { t.firstChild.src = u; t.firstChild.style.backgroundColor = 'transparent'; }, () => {})
       .finally(() => { busy--; pump(); });
+    if (alphaOn()) getVmt(t.dataset.n).then(p => t.classList.toggle('alpha', !!(p?.translucent || p?.alphatest || p?.additive)), () => {});
   }
 }
 
@@ -343,6 +347,7 @@ const HTML = `
 export function mount() {
   host = pane('textures');
   host.classList.add('tb');
+  host.classList.toggle('alpha', alphaOn());
   host.innerHTML = HTML;
   [q, fsel, slider, treeEl, grid, sizer, empty, foot] = ['.tb-q', '.tb-filter', '.tb-size', '.tb-tree', '.tb-grid', '.tb-sizer', '.tb-empty', '.tb-foot'].map(s => host.querySelector(s));
   fsel.append(...Object.entries(FILTERS).map(([value, [textContent]]) => el('option', { value, textContent })));
@@ -391,12 +396,20 @@ export function mount() {
     else if (key === 'material') { shown.forEach(t => t.classList.toggle('on', t.dataset.n === cur())); footer(); }
     else if ((key === 'favourites' && fsel.value === 'favs') || (key === 'recentMaterials' && fsel.value === 'recent')) rebase(true);
     else if (key === 'textureThumbSize') { size = thumbSize(); slider.value = size; draw(); }
-
+    else if (key === 'textureAlpha') { host.classList.toggle('alpha', alphaOn()); clearTiles(); draw(); }
   });
+  // Materials loaded again (materials.js forget): their tiles make their thumbnails again.
+  on('forget', ({ names: ns }) => { const s = new Set(ns); shown.forEach(t => s.has(t.dataset.n) && queue.push(t)); pump(); });
 
   register('textures.show', { title: 'Textures: show browser', keys: ['shift+t'], run: () => show('textures') });
   register('textures.find', { title: 'Textures: search', keys: ['ctrl+shift+t'], run: () => { show('textures'); q.focus(); q.select(); } });
   register('material.replace', { title: 'Find and replace material...', keys: ['ctrl+shift+r'], run: () => replaceDialog() });
   register('select.byMaterial', { title: 'Select by current material (faces in face mode)', run: () => selectUsing(cur()) });
+  register('textures.alpha', { title: 'Textures: checkerboard behind translucent textures (toggle)', run: () => setCfg('textureAlpha', !alphaOn()), on: alphaOn });
+  register('textures.reload', { title: 'Textures: reload the loaded materials from disk', run: () => {
+    const ns = [...matCache.keys()];
+    for (const n of ns) forget(n);
+    setCursor(`Reloading ${plural(ns.length, 'material')}`);
+  } });
   load();
 }

@@ -1,10 +1,10 @@
 // Hammer's brush commands: carve (Ctrl+Shift+C), hollow dialog, transform dialog (Ctrl+M), flip (Ctrl+L / Ctrl+I),
-// align to the selection bounds, snap selection to grid. Flip and align work on the axes of the 2D view under the
-// pointer last (X / Z after the 3D view).
+// align to the selection bounds, snap selection to grid, Hammer++'s merge, the path node auto-link toggle. Flip and
+// align work on the axes of the 2D view under the pointer last (X / Z after the 3D view).
 import * as V from '../vmf.js';
-import { S, doc, sel, cache, edit, nextId, selBox, setCursor, transformSel, rotateSel, hollowSel, mergeUndo, movable, sideUsers } from './state.js';
+import { S, doc, sel, cache, edit, nextId, selBox, setCursor, transformSel, rotateSel, hollowSel, mergeUndo, movable, sideUsers, mergeSel } from './state.js';
 import { register } from './commands.js';
-import { cfg } from './settings.js';
+import { cfg, setCfg } from './settings.js';
 import { el } from './dom.js';
 import { viewByName } from './view2d.js';
 
@@ -65,12 +65,13 @@ async function hollowDialog() {
 }
 
 // Hammer's Transform dialog: move (offset, or absolute position of the selection centre), rotate (degrees about X, Y,
-// Z through the centre), scale (factors, or absolute size) about the centre. One undo step.
+// Z through the centre), scale (factors, or absolute size) about the centre. A placed pivot (pivot.place) stands in for
+// the centre in rotate and scale. One undo step.
 let tmode = 'move';
 async function transformDialog() {
   const box = selBox();
   if (!box) return;
-  const c = centre(box), size = box[1].map((x, k) => x - box[0][k]), xyz = [0, 1, 2].map(() => num(0)), abs = el('input', { type: 'checkbox' });
+  const c = centre(box), o = S.pivot ?? c, size = box[1].map((x, k) => x - box[0][k]), xyz = [0, 1, 2].map(() => num(0)), abs = el('input', { type: 'checkbox' });
   const radios = ['move', 'rotate', 'scale'].map(m => el('input', { type: 'radio', name: 'bt-mode', value: m, checked: m === tmode }));
   const fill = () => {
     tmode = radios.find(r => r.checked).value;
@@ -89,12 +90,19 @@ async function transformDialog() {
   if (tmode === 'move') return transformSel([1, 1, 1], v.a ? v.v.map((x, k) => x - c[k]) : v.v);
   if (tmode === 'rotate') {
     let n = 0;
-    v.v.forEach((deg, k) => { if (deg % 360) { rotateSel(k, deg, c); if (n++) mergeUndo(); } });
+    v.v.forEach((deg, k) => { if (deg % 360) { rotateSel(k, deg, o); if (n++) mergeUndo(); } });
     return;
   }
   const s = v.a ? v.v.map((x, k) => (size[k] ? x / size[k] : 1)) : v.v;
   if (s.some(x => !(x > 0))) return setCursor('transform: scale needs positive values');
-  transformSel(s, c.map((x, k) => x - x * s[k]));
+  transformSel(s, o.map((x, k) => x - x * s[k]));
+}
+
+// ---------- merge ----------
+// Hammer++'s Merge: the selected brushes become one, their convex hull, in the first one's place.
+function merge() {
+  const n = [...sel].filter(x => x.name === 'solid').length;
+  setCursor(mergeSel() ? `merged ${n} brushes into their convex hull` : n > 1 ? 'merge: the brushes have no volume together' : 'merge: select two or more brushes');
 }
 
 // ---------- flip, align, snap ----------
@@ -144,6 +152,13 @@ export function mount() {
     ['align.center', 'Align: center', () => align('center', 0, 1), [], any],
     ['brush.snapToGrid', 'Snap selection to grid individually', snapGrid, ['ctrl+shift+b'], any],
     ['brush.snapSelection', 'Snap selection to grid (as one)', snapAll, [], any],
+    ['brush.merge', 'Brush: merge into one (convex hull)', merge, [], () => [...sel].filter(n => n.name === 'solid').length > 1],
   ];
   for (const [id, title, run, keys, when] of cmds) register(id, { title, run, keys, when });
+  // state cloneSel reads it: a lone path_track / path_corner clone goes into its path
+  register('path.autoLink', {
+    title: 'Paths: link cloned path nodes into the path (toggle)',
+    run: () => { setCfg('pathAutoLink', cfg.pathAutoLink === false); setCursor(`path node clones ${cfg.pathAutoLink ? 'go into the path' : 'stay unlinked'}`); },
+    on: () => cfg.pathAutoLink !== false,
+  });
 }

@@ -1,8 +1,9 @@
 // Copy, cut, paste: the selection as a VMF snippet (versioninfo, the visgroups it names, world with its solids, its
 // entities) on the system clipboard, and kept here for when the clipboard holds something else. Paste in place, Paste
-// at cursor (bounds corner at the last 2D pointer position or 3D surface point, grid-snapped) and Paste special.
+// at cursor (bounds corner at the last 2D pointer position or 3D surface point, grid-snapped) and Paste special (name
+// prefix / suffix / unique, group the pasted objects).
 import * as V from '../vmf.js';
-import { S, doc, sel, cache, EMPTY, nextId, addObjects, deleteSel, setCursor, groupOf } from './state.js';
+import { S, doc, sel, cache, EMPTY, nextId, addObjects, deleteSel, setCursor, groupOf, objects, groupEach, mergeUndo } from './state.js';
 import { register } from './commands.js';
 import { cfg } from './settings.js';
 import { visgroups } from './outliner.js';
@@ -59,6 +60,31 @@ export function prepare(objs, names, ids, nextId, tag = '') {
 export const boundsOf = objs => V.bounds(objs.flatMap(o => (o.name === 'solid' ? [o] : V.kids(o, 'solid').length ? V.kids(o, 'solid') : [o]))
   .flatMap(n => (n.name === 'solid' ? V.faces(n) : [{ pts: [V.nums(V.get(n, 'origin'))].filter(p => p.length === 3) }])));
 
+// Paste special's name options on pasted copies (changed in place): each entity's targetname becomes fn(name), once per
+// name (entities sharing a name keep sharing it), and every other value or output target in objs naming a renamed
+// entity follows. Names of entities outside objs are left alone. Returns old name -> new name.
+export function rename(objs, fn) {
+  const ents = objs.filter(o => o.name === 'entity'), map = new Map();
+  for (const e of ents) { const n = V.get(e, 'targetname'); if (n && !map.has(n)) map.set(n, fn(n)); }
+  for (const e of ents) {
+    for (const q of e.kv) if (q[0] !== 'id' && q[0] !== 'classname' && map.has(q[1])) q[1] = map.get(q[1]);
+    for (const q of V.kids(e, 'connections').flatMap(c => c.kv)) {
+      const sep = q[1].includes('\x1b') ? '\x1b' : ',', f = q[1].split(sep);
+      if (map.has(f[0])) { f[0] = map.get(f[0]); q[1] = f.join(sep); }
+    }
+  }
+  return map;
+}
+// name when used (a Set of names in the map) lacks it, else the first free base_1, base_2, ... (base: name without a
+// _<number> end). Adds the result to used.
+export function uniqueName(name, used) {
+  const base = name.replace(/_\d+$/, '');
+  let k = 0, n = name;
+  while (used.has(n)) n = `${base}_${++k}`;
+  used.add(n);
+  return n;
+}
+
 // ---------- copy ----------
 let buffer = null; // the last snippet copied here
 let at = null; // the pointer: { v, w } in a 2D view, or { p } on a 3D surface
@@ -76,7 +102,7 @@ function selObjects() {
 }
 
 // A group member carries its group's visgroups in the snippet (state.addObjects moves them to the pasted group).
-function withGroupVgs(o) {
+export function withGroupVgs(o) {
   const add = vgIdsIn([groupOf(o)].filter(Boolean));
   if (!add.length) return o;
   return { ...o, children: o.children.map(c => {
@@ -87,8 +113,9 @@ function withGroupVgs(o) {
   }) };
 }
 
-export function copyText(prefab = false) {
-  const objs = selObjects().map(withGroupVgs), ids = new Set(vgIdsIn(objs));
+// Snippet text of top-level objects (the selection by default; not changed) and the visgroups they name.
+export function copyText(prefab = false, from = selObjects()) {
+  const objs = from.map(withGroupVgs), ids = new Set(vgIdsIn(objs));
   return { text: snippet(objs, visgroups().filter(g => ids.has(g.id)).map(g => ({ id: g.id, name: g.name, color: V.get(g.node, 'color') })), prefab), count: objs.length };
 }
 
@@ -135,7 +162,9 @@ async function paste(atCursor) {
 }
 
 // Hammer's Paste special: copies 1..n each offset and rotated (about its own centre) by i times the step, starting
-// from the original position or from the cursor. One undo step; each copy gets its own groups.
+// from the original position or from the cursor. One undo step; each copy gets its own groups, or with Group one group
+// holds everything pasted. Names: prefix + name + suffix on every named entity; Unique adds _1, _2 to a name the map
+// (or an earlier copy) has already. Outputs and keys inside each copy follow its renames.
 async function pasteSpecial() {
   const d = readSnippet(await clipText());
   if (!d) return setCursor('Nothing to paste: copy objects first');
@@ -144,11 +173,23 @@ async function pasteSpecial() {
     { key: 'off', label: 'Offset per copy (x y z)', value: '0 0 0' },
     { key: 'rot', label: 'Rotation per copy (x y z degrees)', value: '0 0 0' },
     { key: 'centre', label: 'Start at centre of original', type: 'checkbox', value: true },
+    { key: 'prefix', label: 'Name prefix', value: '' },
+    { key: 'suffix', label: 'Name suffix', value: '' },
+    { key: 'unique', label: 'Make names unique (_1, _2)', type: 'checkbox', value: false },
+    { key: 'group', label: 'Group the pasted objects', type: 'checkbox', value: false },
   ]);
   if (!r) return;
   const n = Math.round(+r.n), off = V.nums(r.off), rot = V.nums(r.rot);
   if (!(n >= 1 && n <= 500) || off.length !== 3 || rot.length !== 3) return notice('Paste special: copies must be 1 to 500; offset and rotation take three numbers (x y z).');
-  const ids = idsByName(), objs = [];
+  pasteCopies(d, { ...r, n, off, rot });
+  setCursor(`pasted ${n} cop${n === 1 ? 'y' : 'ies'}`);
+}
+
+// Paste special's copies of snippet data d (readSnippet) with the dialog's answers r: { n, off, rot (numbers), centre,
+// prefix, suffix, unique, group }. One undo step; returns the pasted objects.
+export function pasteCopies(d, r) {
+  const { n, off, rot, prefix = '', suffix = '' } = r, ids = idsByName(), objs = [], used = new Set(objects().map(o => V.get(o, 'targetname')).filter(Boolean));
+  const named = x => (r.unique ? uniqueName(prefix + x + suffix, used) : prefix + x + suffix);
   for (let i = 1; i <= n; i++) {
     const c = prepare(d.objs, d.names, ids, nextId, `#${i}`), base = (!r.centre && toCursor(boundsOf(c))) || [0, 0, 0];
     c.forEach(o => V.transform(o, [1, 1, 1], base.map((x, k) => x + off[k] * i), lock()));
@@ -156,10 +197,12 @@ async function pasteSpecial() {
       const [mn, mx] = boundsOf(c), p = mn.map((x, k) => (x + mx[k]) / 2);
       [0, 1, 2].forEach(k => rot[k] && c.forEach(o => V.rotate(o, p, k, rot[k] * i, lock())));
     }
+    if (prefix || suffix || r.unique) rename(c, named);
     objs.push(...c);
   }
   addObjects(objs);
-  setCursor(`pasted ${n} cop${n === 1 ? 'y' : 'ies'}`);
+  if (r.group && groupEach([objs]).length) mergeUndo();
+  return objs;
 }
 
 export function mount() {

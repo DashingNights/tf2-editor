@@ -1,8 +1,9 @@
 // Entity visuals like Hammer draws them, from the FGD helpers (fgd.js resolve().helpers):
 // - info_overlay and infodecal as textured quads on their face (a builder registered at import, so it comes before
 //   builders that would draw their helper models);
-// - every other point entity, when no other builder took it: iconsprite / sprite() as camera-facing sprites, else the
-//   size() box in the FGD colour (registered once the FGD has loaded, so it comes after the other builders);
+// - every other point entity, when no other builder took it: iconsprite / sprite() as camera-facing sprites (env_sprite
+//   and env_glow as big as their texture times their scale key), else the size() box in the FGD colour (registered
+//   once the FGD has loaded, so it comes after the other builders);
 // - for the selection: sphere(), lightcone(), frustum(), wirebox(), sidelist(), origin(), axis() as lines;
 // - entity lines (target, parentname, outputs, line(), cylinder(), keyframe(), vecline()) in 3D and in the 2D views,
 //   toggled by 'view.entityLines' (cfg.entityLines); the sun's direction arrow on light_environment, always.
@@ -13,7 +14,7 @@ import { on } from './bus.js';
 import { cache, sel, setCursor, registerPointLook, touch } from './state.js';
 import { cfg, setCfg } from './settings.js';
 import { register } from './commands.js';
-import { getMaterial, getVmt, clean } from './materials.js';
+import { getMaterial, getVmt, textureSize, clean } from './materials.js';
 import { registerBuilder, refreshEntry, addHelper, invalidate } from './view3d.js';
 import { registerOverlay, invalidate as invalidate2d } from './view2d.js';
 import { lightDir } from './lighting.js';
@@ -216,6 +217,24 @@ function measured(key, m) {
   });
 }
 
+// env_sprite / env_glow size: the sprite texture's [w, h] (materials.js textureSize), known once loaded; until then
+// (and without a texture) 32 x 32.
+const spriteSize = new Map(), spriteWait = new Map(), spritesOn = () => cfg.spriteSizes ?? true;
+function spriteDims(name, node) {
+  const key = clean(name);
+  if (spriteSize.has(key)) return spriteSize.get(key);
+  const w = spriteWait.get(key) ?? spriteWait.set(key, new Set()).get(key);
+  w.add(node);
+  if (w.size === 1) textureSize(key).then(t => {
+    spriteSize.set(key, t ? [t.w, t.h] : [32, 32]);
+    spriteWait.delete(key);
+    w.forEach(refreshEntry);
+  });
+  return [32, 32];
+}
+// A sprite's size in units: [w, h] times scale (0 or unset: 1), at least 8 so it stays visible and pickable.
+export const spriteScale = (dims, scale) => dims.map(x => Math.max(8, x * (scale || 1)));
+
 // ---------- builders ----------
 // Builders own their geometry: the previous build's geometry of a node goes when it is rebuilt or deleted.
 const owned = new Map();
@@ -254,18 +273,20 @@ function look(n) {
 }
 
 // Every other point entity: its icon (iconsprite, or the sprite() entity's own sprite); null leaves the default box.
+// env_glow (env_sprite in the game) draws as env_sprite when the FGD lacks it.
 function visual(c) {
   if (!c.point) return null;
-  const n = c.node, d = defOf(kv(n, 'classname') ?? ''), o = vec(n, 'origin');
+  const n = c.node, cls = kv(n, 'classname') ?? '', d = defOf(cls) ?? (cls === 'env_glow' ? defOf('env_sprite') : null), o = vec(n, 'origin');
   free(n);
   if (!o) return null;
   const icon = helper(d, 'iconsprite'), spr = helper(d, 'sprite');
   if (icon || spr) {
     const name = (icon?.args[0] || kv(n, 'model') || '').replace(/\.spr$/i, '');
     if (name) {
-      const s = new THREE.Sprite(unitMat(name, icon ? 's' : 'a')), k = icon ? 16 : Math.max(8, 32 * num(n, 'scale', 1));
+      const s = new THREE.Sprite(unitMat(name, icon ? 's' : 'a')), k = num(n, 'scale', 1), old = Math.max(8, 32 * k);
+      const [w, h] = icon ? [16, 16] : spritesOn() ? spriteScale(spriteDims(name, n), k) : [old, old];
       s.position.set(...o);
-      s.scale.set(k, k, 1);
+      s.scale.set(w, h, 1);
       return s;
     }
   }
@@ -363,11 +384,16 @@ export function mount() {
   on('selection', reshape);
   on('cfg', ({ key }) => {
     if (key === 'entityLines') relink();
-    if (key === 'tf2') { decalSize.clear(); loadFgd(); }
+    if (key === 'tf2') { decalSize.clear(); spriteSize.clear(); loadFgd(); }
   });
   register('view.entityLines', { title: 'View: entity lines (targets, parents, outputs) (toggle)', on: linesOn, run: () => {
     setCfg('entityLines', !linesOn());
     setCursor(`entity lines ${linesOn() ? 'on' : 'off'}`);
+  } });
+  register('view.spriteSizes', { title: 'View: sprite sizes from their textures (env_sprite, env_glow) (toggle)', on: spritesOn, run: () => {
+    setCfg('spriteSizes', !spritesOn());
+    setCursor(`sprite sizes from textures ${spritesOn() ? 'on' : 'off'}`);
+    for (const c of cache.values()) if (c.point && /^env_(sprite|glow)$/i.test(kv(c.node, 'classname') ?? '')) refreshEntry(c.node);
   } });
   loadFgd();
 }

@@ -16,6 +16,14 @@ export const toScreen = (v, p) => s2(v, p[v.ax[0]], p[v.ax[1]]);
 export const viewByName = name => views.find(v => v.name === name);
 const step = () => (cfg.snapGrid ? S.grid : 1); // grid snapping off: 1 unit
 const sn = x => Math.round(x / step()) * step();
+// The grid step drawn at zoom z (px per unit): grid g (sub-unit too; 0 or less: 1) doubled until lines are 6 px apart.
+export function gridStep(g, z) {
+  g = g > 0 ? g : 1;
+  while (g * z < 6) g *= 2;
+  return g;
+}
+// A coordinate for the status bar: whole units, or on grid g when g is below 1 (0.125 -> 3 decimals).
+export const coord = (x, g) => (g < 1 ? +(Math.round(x / g) * g).toFixed(3) : Math.round(x));
 // The drag preview as a point function: p * s + t (in the frame turned by yaw about z), or a rotation r about r.pivot.
 export function previewFn(xf) {
   if (!xf) return p => p;
@@ -69,10 +77,25 @@ function facePath(faces, f) {
   for (const fc of faces) { fc.pts.forEach((q, i) => { const s = f(q); i ? p.lineTo(s[0], s[1]) : p.moveTo(s[0], s[1]); }); p.closePath(); }
   return p;
 }
+// fn(v, entry) -> Path2D | null: an object's outline in view v, in world units, instead of its faces (extras2d.js: model
+// wireframes); such an outline gets no point entity fill. Returns the hook it replaces.
+let outlineFn = null;
+export function setOutline(fn) {
+  const was = outlineFn;
+  outlineFn = fn;
+  for (const v of views) v.np = null;
+  gen++;
+  invalidate();
+  return was;
+}
 function outline(v, c) {
   const [a, b] = v.ax;
   let p = (v.np ??= new Map()).get(c.node);
-  if (!p) v.np.set(c.node, (p = facePath(c.faces, q => [q[a], q[b]])));
+  if (p) return p;
+  try { p = outlineFn?.(v, c); } catch (e) { console.error(e); }
+  if (p) p.wire = true;
+  else p = facePath(c.faces, q => [q[a], q[b]]);
+  v.np.set(c.node, p);
   return p;
 }
 function groups(v) {
@@ -80,8 +103,8 @@ function groups(v) {
   const out = new Map();
   for (const c of cache.values()) {
     if (!c.visible) continue;
-    const key = c.color2d + (c.point ? '|' : '');
-    (out.get(key) || out.set(key, new Path2D()).get(key)).addPath(outline(v, c));
+    const p = outline(v, c), key = c.color2d + (c.point && !p.wire ? '|' : '');
+    (out.get(key) || out.set(key, new Path2D()).get(key)).addPath(p);
   }
   for (const n of v.np?.keys() ?? []) if (!cache.has(n)) v.np.delete(n);
   v.gen = gen;
@@ -93,8 +116,27 @@ function groups(v) {
 // shifted, and the crisp version is rendered once the view is at rest. The key holds every input, settings too.
 const SETTLE = 90;
 const look = () => [cfg.showGrid2d, cfg.grid2dMajor, cfg.gridMinorColor, cfg.gridMajorColor, cfg.gridAxisColor, cfg.fillPointEntities].join();
+// fn(ctx, v) draws into the cached static layer, in CSS pixels: under the grid (under: background images) or over the
+// outlines (entity icons). Call relayer() when what it draws changes. Returns the unregister function.
+const layers = new Set();
+let layerGen = 0;
+export function relayer() { layerGen++; invalidate(); }
+export function registerLayer(fn, under = false) {
+  const l = { fn, under };
+  layers.add(l);
+  relayer();
+  return () => { layers.delete(l); relayer(); };
+}
+function paint(ctx, v, under) {
+  for (const l of layers) {
+    if (l.under !== under) continue;
+    ctx.save();
+    try { l.fn(ctx, v); } catch (e) { console.error(e); }
+    ctx.restore();
+  }
+}
 function staticLayer(v) {
-  const { w, h, z } = v, dpr = devicePixelRatio, key = `${gen}|${v.c}|${z}|${w}|${h}|${S.grid}|${dpr}|${look()}`;
+  const { w, h, z } = v, dpr = devicePixelRatio, key = `${gen}|${layerGen}|${v.c}|${z}|${w}|${h}|${S.grid}|${dpr}|${look()}`;
   const L = (v.layer ??= document.createElement('canvas'));
   if (L.key === key) return L;
   if (L.key && v.hold > performance.now() && L.gen === gen && L.w === w && L.h === h) {
@@ -108,11 +150,11 @@ function staticLayer(v) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.fillStyle = '#101216';
   ctx.fillRect(0, 0, w, h);
+  paint(ctx, v, true);
   const [x0, y1] = toWorld(v, 0, 0), [x1, y0] = toWorld(v, w, h);
 
   if (cfg.showGrid2d !== false) {
-    let g = S.grid;
-    while (g * z < 6) g *= 2;
+    const g = gridStep(S.grid, z);
     const major = +cfg.grid2dMajor || 1024, grid = [new Path2D(), new Path2D(), new Path2D()]; // minor, major, axis
     for (let x = Math.ceil(x0 / g) * g; x <= x1; x += g) {
       const s = Math.round(s2(v, x, 0)[0]) + 0.5, p = grid[x === 0 ? 2 : x % major ? 0 : 1];
@@ -134,6 +176,8 @@ function staticLayer(v) {
     ctx.stroke(p);
     if (key.endsWith('|') && cfg.fillPointEntities !== false) { ctx.globalAlpha = 0.35; ctx.fillStyle = col; ctx.fill(p); ctx.globalAlpha = 1; }
   }
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  paint(ctx, v, false);
   return L;
 }
 
@@ -180,7 +224,7 @@ function draw(v) {
     ctx.setLineDash([]);
     if (!tools.has(S.tool)) for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) if (i !== 1 || j !== 1) { const [x, y] = at(i, j); ctx.fillRect(x - 3, y - 3, 6, 6); } // a tool draws its own handles
     if (cfg.showDimensions !== false) {
-      const size = (a, b) => { const p = P(...a), q = P(...b); return String(+Math.hypot(...p.map((x, k) => q[k] - x)).toFixed(2)); };
+      const size = (a, b) => { const p = P(...a), q = P(...b); return String(+Math.hypot(...p.map((x, k) => q[k] - x)).toFixed(3)); };
       const top = at(1, 2), right = at(2, 1);
       ctx.font = '11px system-ui';
       ctx.fillText(size([0, 2], [2, 2]), top[0] - 10, top[1] - 8);
@@ -221,6 +265,18 @@ export function registerOverlay(fn) { overlays.add(fn); invalidate(); return () 
 // pointer. A handler returning true consumes the event. Returns the unregister function.
 const tools = new Map();
 export function registerTool(id, handlers) { tools.set(id, handlers); return () => tools.get(id) === handlers && tools.delete(id); }
+
+// fn(v, x, y) -> { cursor, move(v, e, w), up(v, e, w), cancel() } | null: takes a left press at CSS pixel (x, y) of view
+// v with any tool (after the active tool's own down, before block, entity and select); hovering there shows cursor.
+// Used for things drawn in every view, such as the 3D camera. Returns the unregister function.
+const presses = new Set();
+export function registerPress(fn) { presses.add(fn); return () => presses.delete(fn); }
+function pressAt(v, x, y) {
+  for (const fn of presses) { const h = fn(v, x, y); if (h) return h; }
+  return null;
+}
+// The 2D view under the pointer last (null once the pointer entered the 3D view).
+export const hovered = () => hover;
 // Calls the active tool's handler fn; true when it consumed the event. Redraws v (tools draw through overlays).
 function use(fn, v, e) {
   const h = tools.get(S.tool)?.[fn];
@@ -293,6 +349,8 @@ function down(v, e) {
   const w = toWorld(v, e.offsetX, e.offsetY), at = { v, sx: e.offsetX, sy: e.offsetY, a: w, b: w };
   if (e.button !== 0 || held.has('Space')) return void (drag = { ...at, mode: 'pan', c0: [...v.c] });
   if (use('down', v, e)) return void (drag = { ...at, mode: 'tool' });
+  const hk = pressAt(v, e.offsetX, e.offsetY);
+  if (hk) return void (drag = { ...at, mode: 'hook', hk });
   if (S.tool === 'block') {
     const d = { ...at, mode: 'block', snap: snap.any() && snap.snapper({ proj: projNow(v), moving: [[0, 0, 0]] }) };
     d.a = d.b = corner(v, d, w);
@@ -315,13 +373,14 @@ function down(v, e) {
 
 function move(v, e) {
   const w = toWorld(v, e.offsetX, e.offsetY), d = drag;
-  setCoords(`${v.name} ${Math.round(w[0])} ${Math.round(w[1])}`);
+  setCoords(`${v.name} ${coord(w[0], S.grid)} ${coord(w[1], S.grid)}`);
   if ((!d || d.mode === 'tool') && (use('move', v, e) || d)) return;
   if (!d || d.v !== v) {
     const fr = S.tool === 'select' && frameIn(v), h = fr && handleAt(v, fr, e.offsetX, e.offsetY);
-    v.cv.style.cursor = h ? resizeCursor(h, fr.yaw) : '';
+    v.cv.style.cursor = pressAt(v, e.offsetX, e.offsetY)?.cursor ?? (h ? resizeCursor(h, fr.yaw) : '');
     return;
   }
+  if (d.mode === 'hook') return void (d.hk.move?.(v, e, w), invalidate());
   if (d.mode === 'pan') { v.c = [d.c0[0] - (e.offsetX - d.sx) / v.z, d.c0[1] + (e.offsetY - d.sy) / v.z]; holdView(v); }
   else if (d.mode === 'block') d.b = corner(v, d, w);
   else if (d.mode === 'marquee') d.b = w;
@@ -344,9 +403,9 @@ function move(v, e) {
         const size = Math.max(sn(h > 0 ? q[i] - lo : hi - q[i]), Math.min(hi - lo, step()));
         if (h > 0) nhi = lo + size; else nlo = hi - size;
       } else {
-        const p = sn(w[i]);
-        nlo = h < 0 ? Math.min(p, hi - 1) : lo;
-        nhi = h > 0 ? Math.max(p, lo + 1) : hi;
+        const p = sn(w[i]), m = Math.min(1, step()); // the smallest size: 1 unit, or a sub-unit grid step
+        nlo = h < 0 ? Math.min(p, hi - m) : lo;
+        nhi = h > 0 ? Math.max(p, lo + m) : hi;
       }
       s[k] = (nhi - nlo) / (hi - lo);
       t[k] = nlo - lo * s[k];
@@ -363,6 +422,7 @@ function up(v, e) {
   snap.mark.at = null;
   if (d.xf) setPreview(null);
   if (d.mode === 'tool') return void use('up', v, e);
+  if (d.mode === 'hook') return void (d.hk.up?.(v, e, toWorld(v, e.offsetX, e.offsetY)), invalidate());
   if (d.mode !== 'pan' && use('up', v, e)) return invalidate();
   if (d.mode === 'block' && d.a[0] !== d.b[0] && d.a[1] !== d.b[1]) {
     const mn = [...S.last[0]], mx = [...S.last[1]]; // depth axis reuses the last block's extent
@@ -387,6 +447,7 @@ function cancelDrag() {
   drag = null;
   snap.mark.at = null;
   if (d?.xf) setPreview(null);
+  d?.hk?.cancel?.();
   invalidate();
 }
 

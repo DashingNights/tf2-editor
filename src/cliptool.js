@@ -1,7 +1,9 @@
 // Hammer's clipping tool (Shift+X): a line dragged in a 2D view (grid points) defines a plane perpendicular to that
-// view; in 3D two surface clicks do, the plane standing on the first surface. The cut previews in every view (kept
-// pieces white, dropped ones grey). X or Shift+X cycles keep both / front / back, Enter clips the selected brushes the
-// plane crosses as one edit, Escape cancels (a second Escape leaves the tool). The 2D line ends can be dragged.
+// view; in 3D two surface clicks do, the plane standing on the first surface. C switches to 3-point mode (Hammer++): a
+// third point tilts the plane, placed by a press in another 2D view than the line's or a third click in 3D. The cut
+// previews in every view (kept pieces white, dropped ones grey). X or Shift+X cycles keep both / front / back, Enter
+// clips the selected brushes the plane crosses as one edit, Escape cancels (a second Escape leaves the tool). The 2D
+// handles (line ends, third point) can be dragged.
 import * as THREE from 'three';
 import * as V from '../vmf.js';
 import { on } from './bus.js';
@@ -18,16 +20,26 @@ const sn = x => Math.round(x / step()) * step();
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const sub = (a, b) => a.map((x, k) => x - b[k]);
 
-// line: { a, b, up }, the plane holds a, b and a + up. waiting: 3D, a is placed and b follows the hover.
-// cuts: the selected solids the plane crosses, { s, ps: [front, back], fs: their faces }. drag: a 2D line end.
-let line = null, waiting = false, mode = 0, cuts = [], drag = null;
+// line: { a, b, up, c, view }, the plane holds a, b and a + up, or c in 3-point mode (three); view: the 2D view the line
+// was drawn in. waiting: 3D, 'b' or 'c' follows the hover. cuts: the selected solids the plane crosses,
+// { s, ps: [front, back], fs: their faces }. drag: a 2D handle ('a', 'b', 'c').
+let line = null, waiting = false, mode = 0, cuts = [], drag = null, three = false;
 const keeps = i => mode === 0 || mode === i + 1;
+const above = l => l.a.map((x, k) => x + l.up[k] * 64); // the third point of the 2-point plane
 
 // The 3 plane points (vmf.js clip), or null without a plane.
 function points() {
   if (!line?.b) return null;
-  const { a, b, up } = line;
-  return Math.hypot(...cross(sub(b, a), up)) > 1e-6 ? [a, b, a.map((x, k) => x + up[k] * 64)] : null;
+  const { a, b } = line, c = three && line.c ? line.c : above(line);
+  return Math.hypot(...cross(sub(b, a), sub(c, a))) > 1e-6 ? [a, b, c] : null;
+}
+
+// C: 2-point and 3-point mode. The third point starts on the 2-point plane, so the plane stays until it moves.
+function toggleThree() {
+  three = !three;
+  if (three && line?.b) line.c ??= above(line);
+  setCursor(three ? 'clip: 3-point mode, the third point tilts the plane (press in another 2D view, or a third click in 3D)' : 'clip: 2-point mode');
+  update();
 }
 
 function update() {
@@ -87,11 +99,11 @@ const segs = fs => fs.flatMap(f => f.pts.flatMap((p, i) => [p, f.pts[(i + 1) % f
 const pieces = keep => cuts.flatMap(c => c.fs.filter((_, i) => keeps(i) === keep).flat());
 
 function redraw() {
-  const q = S.tool === ID && points(), ab = line?.b ? [line.a, line.b] : line ? [line.a] : [];
+  const q = S.tool === ID && points(), ab = line?.b ? [line.a, line.b] : line ? [line.a] : [], c = three && line?.b && line.c;
   setPts(keepL, segs(pieces(true)));
   setPts(dropL, segs(pieces(false)));
-  setPts(abL, ab.length === 2 ? ab : []);
-  setPts(ends, ab);
+  setPts(abL, c ? [line.a, line.b, line.b, c, c, line.a] : ab.length === 2 ? ab : []);
+  setPts(ends, c ? [...ab, c] : ab);
   sheet.visible = !!q;
   if (q) {
     // A square on the plane around the selection centre (projected onto the plane), large enough to cover it.
@@ -126,6 +138,17 @@ function overlay(ctx, v, { toScreen }) {
   ctx.lineTo(...b);
   ctx.stroke();
   for (const [x, y] of [a, b]) ctx.fillRect(x - 3, y - 3, 6, 6);
+  if (!three || !line.b || !line.c) return;
+  const c = toScreen(v, line.c); // the third point, joined to the line ends
+  ctx.strokeStyle = ctx.fillStyle = '#ffd040';
+  ctx.setLineDash([4, 3]);
+  ctx.beginPath();
+  ctx.moveTo(...a);
+  ctx.lineTo(...c);
+  ctx.lineTo(...b);
+  ctx.stroke();
+  ctx.setLineDash([]);
+  ctx.fillRect(c[0] - 3, c[1] - 3, 6, 6);
 }
 
 // ---------- tools ----------
@@ -136,25 +159,27 @@ const tool3d = {
     mode = 0;
     view3d.addHelper(group);
     cancel();
-    setCursor('clip tool: drag a line in a 2D view or click two points in 3D; X keeps both/front/back, Enter clips, Escape cancels');
+    setCursor(`clip tool (${three ? 3 : 2}-point): drag a line in a 2D view or click points in 3D; C 2/3 points, X keeps both/front/back, Enter clips, Escape cancels`);
   },
   deactivate() { view3d.removeHelper(group); cancel(); },
   down(e, hit) {
     if (e.altKey) return false;
     const p = surface(hit);
     if (!p) return true;
-    if (!waiting) { line = { a: p, b: null, up: hit.face.n }; waiting = true; }
-    else {
+    if (waiting === 'b') {
       line.b = p;
-      waiting = false;
-      if (!points()) { line = null; setCursor('clip: click two different points'); }
-    }
+      waiting = three ? 'c' : false;
+      if (!points()) { line = null; waiting = false; setCursor('clip: click two different points'); }
+    } else if (waiting === 'c') {
+      line.c = p;
+      if (points()) waiting = false; else setCursor('clip: the third point is in line with the other two');
+    } else { line = { a: p, b: null, up: hit.face.n }; waiting = 'b'; }
     update();
     return true;
   },
   move(e, hit) {
     const p = waiting && surface(hit);
-    if (p && line.b?.join() !== p.join()) { line.b = p; update(); }
+    if (p && line[waiting]?.join() !== p.join()) { line[waiting] = p; update(); }
     return false;
   },
   key(e) {
@@ -169,14 +194,23 @@ const tool3d = {
 
 const tool2d = {
   down(v, e, w) {
-    const end = line?.b && ['a', 'b'].find(k => Math.hypot(...sub(view2d.toScreen(v, line[k]), [e.offsetX, e.offsetY])) < 7);
+    const near = k => line?.[k] && Math.hypot(...sub(view2d.toScreen(v, line[k]), [e.offsetX, e.offsetY])) < 7;
+    const end = line?.b && ['a', 'b', ...(three ? ['c'] : [])].find(near);
     if (end) { drag = { end }; return true; }
+    // 3-point mode: a press in another view than the line's moves the third point there (its depth in that view stays)
+    if (three && line?.b && v.name !== line.view) {
+      line.c ??= above(line);
+      waiting = false;
+      drag = { end: 'c' };
+      return tool2d.move(v, e, w);
+    }
     // A new line: its points sit at the selection's depth centre, the plane runs along the view's depth axis.
     const dep = 3 - v.ax[0] - v.ax[1], box = selBox(), p = [0, 0, 0], up = [0, 0, 0];
     p[dep] = box ? (box[0][dep] + box[1][dep]) / 2 : 0;
     up[dep] = 1;
     v.ax.forEach((k, i) => { p[k] = sn(w[i]); });
-    line = { a: p, b: [...p], up };
+    line = { a: p, b: [...p], up, view: v.name };
+    if (three) line.c = above(line);
     waiting = false;
     drag = { end: 'b' };
     update();
@@ -192,7 +226,7 @@ const tool2d = {
   up() {
     if (!drag) return false;
     drag = null;
-    if (!points()) line = null;
+    if (line.a.join() === line.b.join()) line = null;
     update();
     return true;
   },
@@ -204,4 +238,5 @@ export function mount() {
   view2d.registerOverlay(overlay);
   for (const t of ['doc', 'selection']) on(t, () => { if (S.tool === ID) update(); });
   register('tool.clip', { title: 'Tool: clipping (again: cycle kept pieces)', keys: ['shift+x'], run: () => (S.tool === ID ? cycle() : setTool(ID)), on: () => S.tool === ID });
+  register('clip.threePoint', { title: 'Clip: 2-point / 3-point plane (toggle)', keys: ['c'], when: () => S.tool === ID, run: toggleThree, on: () => three });
 }

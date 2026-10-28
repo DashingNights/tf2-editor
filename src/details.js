@@ -3,10 +3,12 @@
 import * as V from '../vmf.js';
 import * as F from './fgd.js';
 import { on } from './bus.js';
-import { S, doc, sel, faceSel, cache, edit, setSelection, setPreview, applyMaterial, matName, selBox, selFrame, turnZ, rotateSel, tieSel, objects, groupOf } from './state.js';
+import { S, doc, sel, faceSel, cache, edit, setSelection, setPreview, applyMaterial, matName, selBox, selFrame, turnZ, rotateSel, tieSel, objects, groupOf, setCursor } from './state.js';
 import { register } from './commands.js';
 import { cfg, setCfg } from './settings.js';
 import { el } from './dom.js';
+import { pickColor } from './colorpick.js';
+import * as H from './hotspot.js';
 
 const api = window.api;
 
@@ -53,6 +55,21 @@ export function parseConn([out, v]) {
 }
 export const joinConn = c => [c.target, c.input, c.param, c.delay, c.times].join(c.sep);
 
+// FGD key k's default as Hammer writes it: flags the sum of the bits that default on.
+export const defaultOf = k => (k.type === 'flags' ? String(k.flags.reduce((s, f) => s + (f.default ? f.bit : 0), 0)) : k.default ?? '');
+// The value a reset gives entity e for key k: its default, or undefined (no change) when the key is unset and the
+// default is empty.
+export const resetTo = (e, k) => { const d = defaultOf(k); return d === '' && V.get(e, k.name) === undefined ? undefined : d; };
+
+// smoothing_groups is a bitmask: group g (1-24, as Hammer shows them) is bit g - 1. Other bits are kept.
+export const setBit = (mask, g, on) => (on ? mask | (1 << (g - 1)) : mask & ~(1 << (g - 1))) >>> 0;
+// The lowest group 1-24 that none of the masks uses, 0 when all are taken.
+export function freeGroup(masks) {
+  const used = masks.reduce((a, m) => a | m, 0);
+  for (let g = 1; g <= 24; g++) if (!(used & (1 << (g - 1)))) return g;
+  return 0;
+}
+
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
 const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 const unit = a => { const l = Math.hypot(...a) || 1; return a.map(x => x / l); };
@@ -85,7 +102,8 @@ const TARGET = new Set(['target_destination', 'target_name_or_class', 'filtercla
 const GRID = () => (cfg.snapGrid ? [S.grid, 1, S.grid * 4] : [1, 1, S.grid]);
 const DEG = () => (cfg.snapRotation ? [+cfg.rotationStep || 15, +cfg.rotationStepFine || 5, 45] : [1, 1, 15]);
 
-let host, body, search, fgd = null, raw = false, tab = 'out', picking = null, raf = 0, ents = [];
+// lastKey: the key of the last keyvalue row focused or right-clicked (details.resetKey).
+let host, body, search, fgd = null, raw = false, tab = 'out', picking = null, raf = 0, ents = [], lastKey = null;
 const defs = new Map(), closed = new Set();
 const def = cls => { if (fgd && cls && !defs.has(cls)) defs.set(cls, F.resolve(fgd, cls)); return defs.get(cls) ?? null; };
 const later = () => { raf ||= requestAnimationFrame(() => { raf = 0; render(); }); };
@@ -131,6 +149,16 @@ function delKey(list, key) {
   const ch = list.filter(e => V.get(e, key) !== undefined);
   if (ch.length) edit([], ch, () => ch.forEach(e => e.kv.splice(e.kv.findIndex(p => p[0] === key), 1)));
 }
+// Key name back to each entity's own FGD default (one undo step); entities whose class lacks the key keep it.
+function resetKey(list, name) {
+  lastKey = name;
+  const ks = new Map(list.map(e => [e, def(V.get(e, 'classname'))?.keys.find(x => x.name === name)]));
+  if (![...ks.values()].some(Boolean)) return setCursor(`${name}: not in the FGD, no default to reset to`);
+  setKey(list, name, e => { const k = ks.get(e); return k && resetTo(e, k); });
+  setCursor(`${name}: reset to the FGD default`);
+}
+// The selected entities: point entities and the brush entities of selected solids.
+const owners = () => [...new Set([...sel].map(n => cache.get(n)?.owner))].filter(o => o && o !== doc.world);
 
 // items: [node, {s, t}]. Skips invalid and no-op transforms.
 // items: [node, { s, t, yaw }]: p' = p * s + t, in the frame turned by yaw degrees about z when yaw is set (local axes).
@@ -214,12 +242,16 @@ export function justifyFaces(faces, mode, sizeOf, unitOf = f => f.side) {
     }
   }
 }
+// material -> { w, h } in texels for the materials of the given sides (512x512 when a material has no texture).
+async function texSizes(sides) {
+  const M = await mats(), names = [...new Set(sides.map(s => V.get(s, 'material')))];
+  return new Map(await Promise.all(names.map(async n => [n, (await M?.textureSize?.(n).catch(() => null)) ?? M?.getTextureSize?.(n) ?? { w: 512, h: 512 }])));
+}
 // The selected faces, or with hits every face of some brushes. Faces of one group justify as one surface; with Treat
 // as one (cfg.justifyAsOne), so do all the selected faces. Texture sizes are loaded first (512x512 when a material
 // has no texture).
 async function justify(mode, hits = facesOf(), all = cfg.justifyAsOne) {
-  const M = await mats(), names = [...new Set([...hits.keys()].map(s => V.get(s, 'material')))];
-  const sizes = new Map(await Promise.all(names.map(async n => [n, (await M?.textureSize?.(n).catch(() => null)) ?? M?.getTextureSize?.(n) ?? { w: 512, h: 512 }])));
+  const sizes = await texSizes([...hits.keys()]);
   if (!hits.size) return;
   const faces = [...hits].map(([side, h]) => ({ side, pts: h.face.pts, n: h.face.n, solid: h.solid }));
   edit([...new Set([...hits.values()].map(h => h.solid))], [], () => justifyFaces(faces, mode, m => sizes.get(m), f => (all ? 'all' : groupOf(f.solid) ?? f.side)));
@@ -232,6 +264,45 @@ function align(mode) {
     setTex(s, 'vaxis', v);
     V.set(s, 'rotation', '0');
   });
+}
+
+// Material on the selected faces (one undo step), added to the Textures panel's Recent list.
+const NODRAW = 'TOOLS/TOOLSNODRAW';
+const setFaceMat = name => { name = matName(name); editFaces(s => V.set(s, 'material', name)); remember(name); };
+// A random whole-texel shift on axis k ('uaxis' or 'vaxis') of each selected face, from 0 up to the texture size.
+async function randomShift(k) {
+  const m = facesOf();
+  if (!m.size) return;
+  const sz = await texSizes([...m.keys()]), d = k === 'uaxis' ? 'w' : 'h';
+  editFaces(s => { const a = tex(s, k); a.shift = Math.floor(Math.random() * (sz.get(V.get(s, 'material'))?.[d] || 512)); setTex(s, k, a); });
+}
+// Hotspot (Hammer++): each selected face whose material has a .rect gets the rectangle closest to its shape, one undo
+// step; alt: the alternate rectangles. The status bar names the materials without a .rect.
+async function hotspot(alt = false) {
+  const m = facesOf(), M = await mats();
+  if (!m.size) return setCursor('Hotspot: select faces first');
+  const names = [...new Set([...m.keys()].map(s => V.get(s, 'material')))];
+  const rects = new Map(await Promise.all(names.map(async n => [n, await H.rectsFor(n, M?.getVmt).catch(() => [])])));
+  let n = 0;
+  edit([...new Set([...m.values()].map(h => h.solid))], [], () => m.forEach((h, s) => {
+    const u = tex(s, 'uaxis'), v = tex(s, 'vaxis'), r = H.fit(u, v, h.face.pts, rects.get(V.get(s, 'material')), { alt });
+    if (!r) return;
+    setTex(s, 'uaxis', u);
+    setTex(s, 'vaxis', v);
+    if (r.rot) V.set(s, 'rotation', f6(((+V.get(s, 'rotation') || 0) + 90) % 360));
+    n++;
+  }));
+  const none = names.filter(x => !rects.get(x).length);
+  setCursor(`Hotspot: ${n} face${n === 1 ? '' : 's'} fitted${none.length ? `; no .rect for ${none.join(', ')}` : ''}`);
+}
+const groupsOf = s => +V.get(s, 'smoothing_groups') || 0;
+const setGroups = fn => editFaces(s => V.set(s, 'smoothing_groups', String(fn(groupsOf(s)))));
+// The selected faces join the lowest smoothing group no face of the map uses.
+function newSmoothing() {
+  const g = freeGroup([...cache.values()].filter(c => !c.point).flatMap(c => c.faces.map(f => groupsOf(f.side))));
+  if (!g) return setCursor('Smoothing: all 24 groups are in use');
+  setGroups(m => setBit(m, g, true));
+  setCursor(`Smoothing: the selected faces are in group ${g}`);
 }
 
 // ---------- controls ----------
@@ -267,9 +338,9 @@ const asOne = () => el('label', { className: 'asone', title: 'Treat as one: just
 
 // Numeric field over several targets: vals are the current numbers, apply(f) sets each target to f(old).
 // axis: 0|1|2 adds a coloured label that scrubs the value; without one, the row's label does when the field is the
-// row's only number (row()). preview(d) -> {s, t} shows a drag live.
-function num(id, vals, apply, { axis, label, steps = GRID, preview } = {}) {
-  const v = same(vals.map(fmt)), inp = input(id, v, { cls: 'num' }), esc = inp.onkeydown;
+// row's only number (row()). preview(d) -> {s, t} shows a drag live. show: the value's text (3 decimals).
+function num(id, vals, apply, { axis, label, steps = GRID, preview, show = fmt } = {}) {
+  const v = same(vals.map(show)), inp = input(id, v, { cls: 'num' }), esc = inp.onkeydown;
   inp.onchange = () => { const f = parseVal(inp.value); if (f) apply(f); later(); };
   inp.onkeydown = e => {
     esc(e);
@@ -421,6 +492,12 @@ function face() {
     a[p] = f(a[p]);
     if (Number.isFinite(a[p]) && (p !== 'scale' || a[p])) setTex(s, k, a);
   }), { axis: k === 'uaxis' ? 0 : 1, label: k[0].toUpperCase(), steps });
+  // component j of the raw uaxis / vaxis vector (6 decimals); a zero vector is refused
+  const vecNum = (k, j) => num(`f${k}v${j}`, sides.map(s => tex(s, k).v[j] ?? 0), f => editFaces(s => {
+    const a = tex(s, k);
+    a.v[j] = f(a.v[j] ?? 0);
+    if (Number.isFinite(a.v[j]) && a.v.some(Boolean)) setTex(s, k, a);
+  }), { axis: j, steps: () => [0.1, 0.01, 1], show: f6 });
   const rot = num('frot', sides.map(s => +V.get(s, 'rotation') || 0), f => editFaces(s => {
     const r0 = +V.get(s, 'rotation') || 0, r = f(r0), u = tex(s, 'uaxis'), v = tex(s, 'vaxis'), n = unit(cross(u.v, v.v));
     if (!Number.isFinite(r) || r === r0) return;
@@ -435,17 +512,27 @@ function face() {
     if (x >= 1) V.set(s, 'lightmapscale', String(x));
   }), { steps: () => [8, 1, 32] });
   const fmv = same(sides.map(s => matName(V.get(s, 'material')))), lockOn = cfg.texLock !== false, fm = input('fmat', fmv, { list: 'mats' });
-  const setMat = name => { name = matName(name); editFaces(s => V.set(s, 'material', name)); remember(name); };
-  fm.onchange = () => fm.value && setMat(fm.value);
+  fm.onchange = () => fm.value && setFaceMat(fm.value);
+  const sg = sides.map(groupsOf);
   return section('Face',
-    row('Material', 'Material of the selected faces', thumbOf(fmv), fm, button('Apply current', `Apply the current material (${cfg.material}) to the selected faces`, () => setMat(cfg.material), ''),
-      button('Browse', 'Find this material in the Textures panel', () => browse(fm.value || cfg.material), '')),
+    row('Material', 'Material of the selected faces', thumbOf(fmv), fm, button('Apply current', `Apply the current material (${cfg.material}) to the selected faces`, () => setFaceMat(cfg.material), ''),
+      button('Browse', 'Find this material in the Textures panel', () => browse(fm.value || cfg.material), ''),
+      button('Nodraw', 'Apply tools/toolsnodraw to the selected faces', () => setFaceMat(NODRAW), '')),
     row('Scale', 'Texture scale (units per texel) on U and V', axNum('uaxis', 'scale', SCALE), axNum('vaxis', 'scale', SCALE)),
     row('Shift', 'Texture shift in texels on U and V', axNum('uaxis', 'shift', SHIFT), axNum('vaxis', 'shift', SHIFT)),
+    row('Random shift', 'A random whole-texel shift on each selected face, from 0 to the texture size', button('X', 'Random U shift', () => randomShift('uaxis')), button('Y', 'Random V shift', () => randomShift('vaxis'))),
     row('Rotation', 'Texture rotation in degrees', rot),
+    row('U axis', 'Raw texture U axis vector (uaxis); Align resets it', ...[0, 1, 2].map(j => vecNum('uaxis', j))),
+    row('V axis', 'Raw texture V axis vector (vaxis); Align resets it', ...[0, 1, 2].map(j => vecNum('vaxis', j))),
     row('Lightmap scale', 'Units per luxel (smaller is sharper and costs more)', lm),
     row('Justify', 'Fit the texture once, or align an edge or the centre (the faces of a group as one surface)', ...['fit', 'left', 'right', 'top', 'bottom', 'center'].map(j => button(j[0].toUpperCase() + j.slice(1), 'Justify ' + j, () => justify(j))), asOne()),
-    row('Align', 'Reset the texture axes', button('World', 'Axes from the nearest world plane', () => align('world')), button('Face', 'Axes in the face plane', () => align('face'))),
+    row('Align', 'Reset the texture axes, or fit a hotspot rectangle', button('World', 'Axes from the nearest world plane', () => align('world')), button('Face', 'Axes in the face plane', () => align('face')),
+      button('Hotspot', 'Fit each face to the rectangle of its material\'s .rect closest to its shape (Alt+click: the alternate rectangles)', e => hotspot(e.altKey))),
+    row('Smoothing groups', 'smoothing_groups: vrad smooths the lighting across faces that share a group', el('div', { className: 'sgroups' }, ...Array.from({ length: 24 }, (_, i) => {
+      const on = sg.map(m => (m & (1 << i)) !== 0), cb = check(`sg${i + 1}`, on.every(Boolean), `Smoothing group ${i + 1}`, () => setGroups(m => setBit(m, i + 1, cb.checked)));
+      cb.indeterminate = on.some(Boolean) && !on.every(Boolean);
+      return el('label', { title: `Smoothing group ${i + 1}` }, cb, String(i + 1));
+    }))),
     row('Texture lock', 'Textures follow brushes when they move or rotate', check('texlock', lockOn, 'Texture lock', () => setCfg('texLock', !lockOn))),
     row('In 3D', 'Drag on a face in the 3D view', el('small', { textContent: 'middle-drag: move texture, Ctrl+middle-drag: rotate it' })));
 }
@@ -461,15 +548,22 @@ function entity(list) {
   rows.at(-1).querySelector('input').disabled = !keys;
   if (raw || !keys) return section('Entity', ...rows, ...rawRows(list));
   const extra = sharedKeys(list).filter(n => !keys.some(k => k.name === n))
-    .map(name => ({ name, type: 'string', displayName: name, default: '', description: 'Not in the FGD', choices: [], flags: [] }));
+    .map(name => ({ name, type: 'string', displayName: name, default: '', description: 'Not in the FGD', choices: [], flags: [], nofgd: true }));
   return section('Entity', ...rows, ...[...keys, ...extra].filter(k => !SKIP.has(k.name)).map(k => kvRow(list, k)));
 }
 
 function kvRow(list, k) {
   const get = e => V.get(e, k.name) ?? k.default ?? '', v = same(list.map(get)), id = 'kv:' + k.name;
   const set = val => (v !== undefined || val !== '') && setKey(list, k.name, () => val);
-  const r = row(k.displayName || (k.type === 'flags' ? 'Flags' : k.name), `${k.description ? k.description + '\n\n' : ''}${k.name} (${k.type})`, ...control(list, k, v, get, set, id));
+  const tip = `${k.description ? k.description + '\n\n' : ''}${k.name} (${k.type})${k.nofgd ? '' : `\nRight-click: reset to the default (${defaultOf(k) || 'empty'})`}`;
+  const r = row(k.displayName || (k.type === 'flags' ? 'Flags' : k.name), tip, ...control(list, k, v, get, set, id));
   r.dataset.q += ` ${k.name.toLowerCase()}${k.flags.map(f => ' ' + f.label.toLowerCase()).join('')}`;
+  return keyRow(r, list, k.name);
+}
+// A keyvalue row: right-click resets the key to the FGD default (one undo step); focusing it makes it lastKey.
+function keyRow(r, list, name) {
+  r.dataset.key = name;
+  r.oncontextmenu = e => { e.preventDefault(); resetKey(list, name); };
   return r;
 }
 
@@ -495,7 +589,7 @@ function flags(list, k) {
     const on = list.map(e => (bits(e) & f.bit) !== 0);
     const cb = check(`flag:${k.name}:${f.bit}`, on.every(Boolean), `bit ${f.bit}`, () => setKey(list, k.name, e => String(cb.checked ? bits(e) | f.bit : bits(e) & ~f.bit)));
     cb.indeterminate = on.some(Boolean) && !on.every(Boolean);
-    return el('label', { title: `${f.label} (bit ${f.bit})` }, cb, ' ' + f.label);
+    return el('label', { title: `${f.label} (bit ${f.bit})` }, cb, ` ${f.label} (${f.bit})`);
   }));
 }
 
@@ -512,7 +606,24 @@ function color(list, k, v, get) {
     if (b && Number.isNaN(n)) return later();
     setKey(list, k.name, e => { const o = V.nums(get(e)), base = o.length >= 3 ? o.slice(0, 3) : rgb(); return (b ? [...base, n, ...o.slice(4)] : base).join(' '); });
   };
-  return [ci, bi];
+  const more = button('...', 'Colour picker: RGB, HSV, brightness and the map palette (C)', () => openPicker(list, k, get, more));
+  return [ci, bi, more];
+}
+// The colour picker popover for key k on the entities in list (get: value with the FGD default), under anchor.
+const openPicker = (list, k, get, anchor) => pickColor({ list, key: k.name, get, set: fn => setKey(list, k.name, fn), anchor });
+// The key the colour picker edits on entity e: the class's _light, else rendercolor, else its first color255 key;
+// without one in the FGD _light when set, else rendercolor on props (an entity with a model). { name, default } or null.
+function colorKey(e) {
+  const ks = def(V.get(e, 'classname'))?.keys.filter(k => k.type === 'color255') ?? [];
+  return ks.find(k => k.name === '_light') ?? ks.find(k => k.name === 'rendercolor') ?? ks[0]
+    ?? (V.get(e, '_light') !== undefined ? { name: '_light', default: '255 255 255 200' }
+      : V.get(e, 'model') !== undefined || V.get(e, 'rendercolor') !== undefined ? { name: 'rendercolor', default: '255 255 255' } : null);
+}
+// details.colorPicker (C): the picker at the pointer for the selected entities that share the first one's colour key.
+function colorPicker() {
+  const es = owners(), k = es.map(colorKey).find(Boolean);
+  if (!k) return setCursor('Colour picker: select a light or a prop');
+  openPicker(es.filter(e => colorKey(e)?.name === k.name), k, e => V.get(e, k.name) ?? k.default ?? '');
 }
 
 function angle(list, key, id) {
@@ -557,7 +668,7 @@ function rawRows(list) {
   const rows = names.map(n => {
     const v = same(list.map(e => V.get(e, n) ?? '')), i = input('raw:' + n, v);
     i.onchange = () => (v !== undefined || i.value) && setKey(list, n, () => i.value);
-    return row(n, n, i, button('x', 'Remove key', () => delKey(list, n)));
+    return keyRow(row(n, `${n}\nRight-click: reset to the FGD default`, i, button('x', 'Remove key', () => delKey(list, n))), list, n);
   });
   const k = input('rawk', ''), val = input('rawv', '');
   k.placeholder = 'key';
@@ -679,6 +790,22 @@ export function mount(h) {
   on('cfg', ({ key }) => (key === 'tf2' ? loadFgd() : later()));
   register('applyMat', { title: 'Apply material to selection', run: () => applyMat(cfg.material) });
   register('cancelPick', { title: 'Cancel target pick', keys: ['escape'], when: () => !!picking, run: () => { picking = null; later(); } });
+  register('details.colorPicker', { title: 'Details: colour picker for the selected light or prop', keys: ['c'], when: () => S.tool !== 'clip' && owners().some(e => colorKey(e)), run: colorPicker }); // C in the clip tool: 3-point
+  register('details.resetKey', { title: 'Details: reset the last edited key to its FGD default (right-click a row)', when: () => !!lastKey && owners().length > 0, run: () => resetKey(owners(), lastKey) });
+  const faces = () => faceSel.size > 0;
+  register('face.nodraw', { title: 'Face: apply nodraw to the selected faces', when: faces, run: () => setFaceMat(NODRAW) });
+  register('face.randomShiftX', { title: 'Face: random shift X on the selected faces', when: faces, run: () => randomShift('uaxis') });
+  register('face.randomShiftY', { title: 'Face: random shift Y on the selected faces', when: faces, run: () => randomShift('vaxis') });
+  register('face.hotspot', { title: 'Face: hotspot fit to the closest rectangle of the material\'s .rect', when: faces, run: () => hotspot() });
+  register('face.smoothingNew', { title: 'Face: put the selected faces in an unused smoothing group', when: faces, run: newSmoothing });
+  register('face.smoothingClear', { title: 'Face: clear the smoothing groups of the selected faces', when: faces, run: () => setGroups(() => 0) });
+  body.addEventListener('focusin', e => { lastKey = e.target.closest('.dr')?.dataset.key ?? lastKey; });
+  document.head.append(el('style', { textContent: CSS }));
   loadFgd();
   later();
 }
+
+// Smoothing group checkboxes: 6 to a line.
+const CSS = `#details .sgroups { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1px 2px; width: 100%; font-size: 11px; }
+#details .sgroups label { display: flex; align-items: center; white-space: nowrap; }
+#details .sgroups input { margin: 0 2px 0 0; }`;

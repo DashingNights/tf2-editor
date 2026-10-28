@@ -71,6 +71,16 @@ export const planeText = q => q.map(p => `(${p.map(fmt).join(' ')})`).join(' ');
 export const planeOf = ([a, b, c]) => { const n = norm(cross(sub(a, b), sub(c, b))); return { n, d: dot(n, a), ok: n.every(Number.isFinite) }; };
 export const plane = side => planeOf(pts3(side));
 
+// Hammer++'s vertices_plus for a side whose face the editor recomputed: pts (its corners, CCW seen from outside, as
+// faces() gives them) written right after "plane" the way Hammer++ does, clockwise seen from outside from the corner
+// at the first plane point. Replaces an old block.
+export function setCorners(side, pts) {
+  const r = [...pts].reverse(), a = pts3(side)[0], d = p => Math.hypot(...sub(p, a));
+  const i = r.reduce((b, p, j) => (d(p) < d(r[b]) ? j : b), 0);
+  const v = { name: 'vertices_plus', kv: [...r.slice(i), ...r.slice(0, i)].map(p => ['v', p.map(fmt).join(' ')]), children: [], at: side.kv.findIndex(p => p[0] === 'plane') + 1 };
+  side.children = [v, ...side.children.filter(c => c.name !== 'vertices_plus')];
+}
+
 const EPS = 0.01, S = 1e5;
 function clipPoly(pts, n, d) {
   const out = [];
@@ -260,7 +270,7 @@ export function best3(pts) {
 
 // Rebuilds each off-grid face's plane from its grid-snapped vertices. Leaves the solid unchanged and returns false
 // when the result would be invalid or still have vertices off the grid (a face whose snapped vertices are not coplanar).
-// A face that changes shape loses Hammer++'s vertices_plus (its old corners).
+// A face that changes shape gets Hammer++'s vertices_plus with its new corners.
 const onGrid = (solid, grid) => faces(solid).every(f => f.pts.every(p => p.every(x => Math.abs(x - Math.round(x / grid) * grid) < 1e-3)));
 export function snapVertices(solid, grid) {
   const sides = kids(solid, 'side'), fs = faces(solid), old = sides.map(s => [get(s, 'plane'), s.children]);
@@ -275,7 +285,7 @@ export function snapVertices(solid, grid) {
     set(f.side, 'plane', planeText(q));
   }
   if (!valid(solid) || !onGrid(solid, grid)) return undo();
-  for (const f of faces(solid)) if (!samePoly(f.pts, fs.find(g => g.side === f.side).pts)) f.side.children = f.side.children.filter(c => c.name !== 'vertices_plus');
+  for (const f of faces(solid)) if (!samePoly(f.pts, fs.find(g => g.side === f.side).pts)) setCorners(f.side, f.pts);
   return true;
 }
 
@@ -367,8 +377,8 @@ export function hollow(solid, t, nextId, ids) {
 // kids(solid, 'side') in faces() order (CCW seen from outside), or null. Points closer than 0.01 merge and a side left
 // without area is removed. Leaves the solid unchanged and returns false when a face bends (a point more than 0.01 off
 // its plane), the brush is invalid, or its corners are not the given points (a concave shape). A side whose face
-// changes shape loses Hammer++'s vertices_plus; its displacement stays on a face that keeps 4 corners (the start corner
-// follows its vertex) and goes otherwise, as in Hammer.
+// changes shape gets Hammer++'s vertices_plus with the given points as its corners; its displacement stays on a face
+// that keeps 4 corners (the start corner follows its vertex) and goes otherwise, as in Hammer.
 export function fromPoints(solid, facePoints) {
   const sides = kids(solid, 'side'), kept = solid.children, old = sides.map(s => [get(s, 'plane'), s.children]);
   const undo = () => { solid.children = kept; sides.forEach((s, i) => { set(s, 'plane', old[i][0]); s.children = old[i][1]; }); return false; };
@@ -395,7 +405,8 @@ export function fromPoints(solid, facePoints) {
     const before = was.get(f.side), di = kids(f.side, 'dispinfo')[0];
     if (!before || samePoly(f.pts, before)) continue;
     const quad = f.pts.filter((p, j) => !f.pts.slice(0, j).some(q => Math.hypot(...sub(p, q)) < 0.01)).length === 4;
-    f.side.children = f.side.children.filter(c => c.name !== 'vertices_plus' && (c !== di || quad));
+    f.side.children = f.side.children.filter(c => c !== di || quad);
+    setCorners(f.side, f.pts.map(p => want.find(q => Math.hypot(...sub(p, q)) < 0.01) ?? p));
     const sp = di && quad && nums(get(di, 'startposition'));
     if (sp?.length !== 3) continue;
     const k = before.reduce((b, p, j) => (Math.hypot(...sub(p, sp)) < Math.hypot(...sub(before[b], sp)) ? j : b), 0);
