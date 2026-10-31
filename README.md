@@ -3,6 +3,8 @@
 # TF2 Editor
 
 A map editor for Team Fortress 2 on Windows. It opens and saves `.vmf` files that stay compatible with Hammer++, edits them in a 3D view and three 2D views, and compiles them with the Hammer++ compile tools.
+<img width="2308" height="1476" alt="image" src="https://github.com/user-attachments/assets/53bd16ef-97c7-4d7e-9ba7-44d82aaad494" />
+
 
 ## Install
 
